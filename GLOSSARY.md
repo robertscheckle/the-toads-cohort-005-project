@@ -162,3 +162,16 @@ Tells the Student who made a team Purchase that one of its Team Seats was claime
 
 **Chargeback**:
 A payment dispute the cardholder raises through their card issuer, outside this application. Never used to describe a Refund or Refund Request.
+
+### Bookmarks and Notes
+
+**Bookmark**:
+A Student's flag on a Lesson, so they can find it again. One per Student per
+Lesson, and the Student is the only one who sees it.
+_Avoid_: Favourite, star, saved item
+
+**Note**:
+A Student's own writing about a Lesson, private to the Student who wrote it.
+One per Student per Lesson. A Note is not a Comment — a Comment is addressed
+to other people, a Note is addressed to nobody.
+_Avoid_: Annotation, scratchpad, memo
