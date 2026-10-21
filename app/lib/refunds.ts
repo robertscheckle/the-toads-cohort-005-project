@@ -7,7 +7,7 @@ import { RefundStatus } from "~/db/schema";
 // Refund Amount, Refund Eligibility.
 
 export const REFUND_WINDOW_DAYS = 14;
-export const REFUND_WATCH_LIMIT_SECONDS = 2 * 60 * 60;
+export const REFUND_WATCH_LIMIT_SECONDS = 60 * 60;
 export const REFUND_COMPLETION_LIMIT = 0.5;
 
 export type RefundIneligibleReason =
@@ -104,7 +104,7 @@ export const REFUND_INELIGIBLE_MESSAGES: Record<RefundIneligibleReason, string> 
     completed_too_much:
       "You have completed too much of this course to request a refund.",
     watched_too_much:
-      "You have watched too much of this course to request a refund.",
+      "You have watched too much of this course to get a refund.",
   };
 
 // ─── Refund decisions ───
