@@ -35,6 +35,7 @@ export enum RefundStatus {
   Requested = "requested",
   Approved = "approved",
   Declined = "declined",
+  Refunded = "refunded",
 }
 
 export enum TeamMemberRole {
@@ -240,9 +241,9 @@ export const refunds = sqliteTable(
       .notNull()
       .$type<RefundStatus>()
       .default(RefundStatus.Requested),
-    // The learner's own words, in the box on the course page.
+    // The Student's own words, in the box on the course page.
     reason: text("reason").notNull(),
-    // Null until someone approves — a declined request refunds nothing.
+    // Null until Refunded; then always the full Refund Amount (no partial Refunds).
     amountRefunded: integer("amount_refunded"),
     requestedAt: text("requested_at")
       .notNull()
