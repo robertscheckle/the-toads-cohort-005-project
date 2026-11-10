@@ -391,21 +391,27 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   let progress = 0;
   let lessonProgressMap: Record<number, string> = {};
   let nextLessonId: number | null = null;
-  let refundOffer: { refundAmount: number; lastDayInWindow: string } | null =
-    null;
+  let refundOffer: {
+    refundAmount: number;
+    lastDayInWindow: string;
+    isTeamPurchase: boolean;
+  } | null = null;
 
   if (currentUserId) {
     enrolled = isUserEnrolled(currentUserId, course.id);
 
-    if (enrolled) {
-      const offer = getRefundOffer(currentUserId, course.id);
-      if (offer.eligible) {
-        refundOffer = {
-          refundAmount: offer.refundAmount,
-          lastDayInWindow: offer.lastDayInWindow,
-        };
-      }
+    // Asked whether or not they are enrolled: someone who bought Team Seats
+    // has a Purchase to refund but no Enrollment of their own.
+    const offer = getRefundOffer(currentUserId, course.id);
+    if (offer.eligible) {
+      refundOffer = {
+        refundAmount: offer.refundAmount,
+        lastDayInWindow: offer.lastDayInWindow,
+        isTeamPurchase: offer.isTeamPurchase,
+      };
+    }
 
+    if (enrolled) {
       progress = calculateProgress(currentUserId, course.id, false);
 
       const progressRecords = getLessonProgressForCourse(
@@ -789,11 +795,21 @@ export default function CourseDetail({ loaderData }: Route.ComponentProps) {
                     <RequestRefund
                       slug={course.slug}
                       refundAmount={refundOffer.refundAmount}
+                      isTeamPurchase={refundOffer.isTeamPurchase}
                     />
                   )}
                 </>
               ) : (
-                enrollButton
+                <>
+                  {enrollButton}
+                  {refundOffer && (
+                    <RequestRefund
+                      slug={course.slug}
+                      refundAmount={refundOffer.refundAmount}
+                      isTeamPurchase={refundOffer.isTeamPurchase}
+                    />
+                  )}
+                </>
               )}
               <div className="space-y-2 pt-2 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">
@@ -865,10 +881,15 @@ function RateCourse({ userRating }: { userRating: number | null }) {
 function RequestRefund({
   slug,
   refundAmount,
+  isTeamPurchase,
 }: {
   slug: string;
   refundAmount: number;
+  isTeamPurchase: boolean;
 }) {
+  const title = isTeamPurchase
+    ? "Request a refund for your Team Seats"
+    : "Request a refund";
   const fetcher = useFetcher<{ errors?: Record<string, string> }>();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const isSubmitting = fetcher.state !== "idle";
@@ -889,7 +910,7 @@ function RequestRefund({
           className="w-full text-muted-foreground"
           onClick={() => setIsFormOpen(true)}
         >
-          Request a refund
+          {title}
         </Button>
       </div>
     );
@@ -897,10 +918,12 @@ function RequestRefund({
 
   return (
     <div className="border-t pt-4">
-      <p className="mb-2 text-sm font-medium">Request a refund</p>
+      <p className="mb-2 text-sm font-medium">{title}</p>
       <p className="mb-3 text-xs text-muted-foreground">
         If an admin approves your refund, we will send {formatPrice(refundAmount)}{" "}
         back to the card you paid with.
+        {isTeamPurchase &&
+          " While an admin reviews it, your unclaimed Team Seats cannot be claimed, and once it is refunded they are no longer available."}
       </p>
       <fetcher.Form
         method="post"

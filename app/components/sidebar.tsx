@@ -14,6 +14,7 @@ import {
   Users,
   UsersRound,
   Moon,
+  ReceiptText,
   Sun,
   LogOut,
   Settings,
@@ -90,6 +91,12 @@ const navItems: NavItem[] = [
     label: "Manage Courses",
     to: "/admin/courses",
     icon: <Shield className="size-4" />,
+    roles: [UserRole.Admin],
+  },
+  {
+    label: "Refunds",
+    to: "/admin/refunds",
+    icon: <ReceiptText className="size-4" />,
     roles: [UserRole.Admin],
   },
   {

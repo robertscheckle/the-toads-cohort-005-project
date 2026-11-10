@@ -17,8 +17,22 @@ _Avoid_: Reviewer, support, team
 ### Purchases
 
 **Purchase**:
-A Student's payment for one Course.
+A Student's payment for one Course, either for themselves or for Team Seats.
 _Avoid_: Order, transaction
+
+**Team Seat**:
+One place in a Course bought as part of a team Purchase, which a Student claims to get an Enrollment. A Team Seat cannot be claimed while its Purchase has a Requested or Approved Refund Request, and unclaimed Team Seats stop being available once the Purchase is Refunded.
+_Avoid_: Coupon, code, license
+
+### Enrollments
+
+**Enrollment**:
+A Student's access to one Course. It ends when their Refund for that Course is Refunded; the Purchase and Refund Request remain as the record.
+_Avoid_: Access grant, subscription
+
+**Progress**:
+A Student's record of Lessons completed, quizzes attempted and video watched in a Course. It belongs to the Student, not the Enrollment, so it outlives a Refund and returns if they buy the Course again.
+_Avoid_: Enrollment progress
 
 ### Refunds
 
@@ -39,7 +53,7 @@ The fourteen calendar days after a Purchase, including the whole of the fourteen
 _Avoid_: Cancel window, cooling-off period
 
 **Refund Eligibility**:
-Whether a Purchase may receive a Refund Request: no earlier Refund Request, inside the Refund Window, under two hours watched, under half the Lessons completed, and not a team seat someone has claimed.
+Whether a Purchase may receive a Refund Request: no earlier Refund Request, no earlier Refund for the same Course, inside the Refund Window, under two hours watched, under half the Lessons completed, and no claimed Team Seat. It is decided only when the Refund Request is made.
 _Avoid_: Cancellation offer
 
 ### Refund statuses
@@ -56,7 +70,7 @@ A Refund Request an Admin has rejected; nothing is paid back and the decision is
 _Avoid_: Rejected, denied
 
 **Refunded**:
-An Approved Refund Request whose money an Admin has confirmed as sent; the Student's access to the Course ends.
+An Approved Refund Request whose money an Admin has confirmed as sent; the Student's Enrollment ends, or for a team Purchase its unclaimed Team Seats are no longer available.
 _Avoid_: Reversed, completed
 
 ### Refund emails
@@ -74,7 +88,7 @@ Tells the Student an Admin accepted their Refund Request and payment is on its w
 Tells the Student an Admin rejected their Refund Request.
 
 **Refunded email**:
-Tells the Student their money has been sent and their access to the Course has ended.
+Tells the Student their money has been sent and their access to the Course has ended, or for a team Purchase that the unclaimed Team Seats from this Purchase are no longer available.
 
 ### Not used for Refunds
 

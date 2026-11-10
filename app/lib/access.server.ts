@@ -200,3 +200,19 @@ export async function requireInstructorOrAdmin(request: Request) {
 
   return { userId, user, isAdmin: user.role === UserRole.Admin };
 }
+
+/**
+ * Throws unless the user is an admin. For decisions only an Admin may make,
+ * such as deciding Refund Requests — an Instructor may be consulted but never
+ * decides, so requireStaff and requireInstructorOrAdmin are not enough.
+ */
+export async function requireAdmin(request: Request) {
+  const userId = await requireUserId(request);
+  const user = getUserById(userId);
+
+  if (!user || user.role !== UserRole.Admin) {
+    throw data("Only admins can do that.", { status: 403 });
+  }
+
+  return { userId, user };
+}

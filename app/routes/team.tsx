@@ -16,6 +16,8 @@ import {
   TeamMemberRole,
 } from "~/db/schema";
 import { eq, and } from "drizzle-orm";
+import { getTeamSeatBlock } from "~/lib/refunds.server";
+import { TEAM_SEAT_BLOCK_LABELS, type TeamSeatBlock } from "~/lib/refunds";
 
 function getTeamForAdmin(userId: number) {
   const membership = db
@@ -52,6 +54,8 @@ interface CourseStats {
   courseSlug: string;
   totalSeats: number;
   claimedSeats: number;
+  /** Unclaimed Team Seats from a Refunded Purchase; left out of totalSeats. */
+  unavailableSeats: number;
 }
 
 interface CouponRow {
@@ -60,6 +64,8 @@ interface CouponRow {
   courseId: number;
   courseTitle: string;
   redeemedByEmail: string | null;
+  /** Why an unclaimed Team Seat cannot be claimed right now, if it can't. */
+  seatBlock: TeamSeatBlock | null;
   createdAt: string;
 }
 
@@ -87,6 +93,17 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const allCoupons = getCouponsForTeam(team.id);
 
+  // A claimed seat stays claimed whatever happens to its Purchase; only
+  // unclaimed ones are held or ended by a Refund Request.
+  const blockByPurchase = new Map<number, TeamSeatBlock | null>();
+  function seatBlockFor(coupon: (typeof allCoupons)[number]) {
+    if (coupon.redeemedByUserId !== null) return null;
+    if (!blockByPurchase.has(coupon.purchaseId)) {
+      blockByPurchase.set(coupon.purchaseId, getTeamSeatBlock(coupon.purchaseId));
+    }
+    return blockByPurchase.get(coupon.purchaseId)!;
+  }
+
   // Build per-course stats
   const courseMap = new Map<
     number,
@@ -96,6 +113,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       courseSlug: string;
       total: number;
       claimed: number;
+      unavailable: number;
     }
   >();
 
@@ -108,9 +126,14 @@ export async function loader({ request }: Route.LoaderArgs) {
         courseSlug: course?.slug ?? "",
         total: 0,
         claimed: 0,
+        unavailable: 0,
       });
     }
     const entry = courseMap.get(coupon.courseId)!;
+    if (seatBlockFor(coupon) === "refunded") {
+      entry.unavailable++;
+      continue;
+    }
     entry.total++;
     if (coupon.redeemedByUserId !== null) {
       entry.claimed++;
@@ -124,6 +147,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       courseSlug: e.courseSlug,
       totalSeats: e.total,
       claimedSeats: e.claimed,
+      unavailableSeats: e.unavailable,
     })
   );
 
@@ -141,6 +165,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       courseId: coupon.courseId,
       courseTitle: course?.title ?? "Unknown Course",
       redeemedByEmail,
+      seatBlock: seatBlockFor(coupon),
       createdAt: coupon.createdAt,
     };
   });
@@ -219,18 +244,37 @@ export default function Team({ loaderData }: Route.ComponentProps) {
               </CardHeader>
               <CardContent>
                 <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-2xl font-bold">
-                      {stat.claimedSeats}
-                      <span className="text-base font-normal text-muted-foreground">
-                        {" "}
-                        / {stat.totalSeats}
-                      </span>
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      seats claimed
-                    </p>
-                  </div>
+                  {stat.totalSeats === 0 && stat.unavailableSeats > 0 ? (
+                    // Every seat for this Course came from Refunded Purchases.
+                    <div>
+                      <p className="text-2xl font-bold">Refunded</p>
+                      <p className="text-xs text-muted-foreground">
+                        {stat.unavailableSeats === 1
+                          ? "The 1 seat was refunded and is no longer available."
+                          : `All ${stat.unavailableSeats} seats were refunded and are no longer available.`}
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-2xl font-bold">
+                        {stat.claimedSeats}
+                        <span className="text-base font-normal text-muted-foreground">
+                          {" "}
+                          / {stat.totalSeats}
+                        </span>
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        seats claimed
+                      </p>
+                      {stat.unavailableSeats > 0 && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {stat.unavailableSeats === 1
+                            ? "Plus 1 refunded seat, no longer available."
+                            : `Plus ${stat.unavailableSeats} refunded seats, no longer available.`}
+                        </p>
+                      )}
+                    </div>
+                  )}
                   <Link to={`/courses/${stat.courseSlug}/purchase?mode=team`}>
                     <Button variant="outline" size="sm">
                       Buy more seats
@@ -296,6 +340,17 @@ export default function Team({ loaderData }: Route.ComponentProps) {
                         <span className="text-muted-foreground">
                           Claimed by {coupon.redeemedByEmail}
                         </span>
+                      ) : coupon.seatBlock ? (
+                        <span
+                          className={
+                            coupon.seatBlock === "refunded"
+                              ? "inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                              : "inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+                          }
+                          title={TEAM_SEAT_BLOCK_LABELS[coupon.seatBlock].detail}
+                        >
+                          {TEAM_SEAT_BLOCK_LABELS[coupon.seatBlock].label}
+                        </span>
                       ) : (
                         <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
                           Unclaimed
@@ -303,9 +358,14 @@ export default function Team({ loaderData }: Route.ComponentProps) {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      {!coupon.redeemedByEmail && (
-                        <CopyButton code={coupon.code} />
-                      )}
+                      {!coupon.redeemedByEmail &&
+                        (coupon.seatBlock ? (
+                          <span className="text-xs text-muted-foreground">
+                            {TEAM_SEAT_BLOCK_LABELS[coupon.seatBlock].detail}
+                          </span>
+                        ) : (
+                          <CopyButton code={coupon.code} />
+                        ))}
                     </td>
                   </tr>
                 ))}
