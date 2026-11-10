@@ -17,3 +17,8 @@ Do these checks in this order before you report a change to `app/` as complete:
 ### Issue tracker
 
 Issues and PRDs live as GitHub issues on your own copy of this repo (the `origin` remote), never on `ai-hero-dev/cohort-005-project`, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+## Conventions
+
+- Icons come from `lucide-react`, which matches the shadcn/ui components.
+- Format with Prettier using the repo's `.prettierrc` exactly as it stands.
