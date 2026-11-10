@@ -13,6 +13,8 @@ import { data } from "react-router";
 import { db } from "~/db";
 import { purchases, coupons, courses, enrollments } from "~/db/schema";
 import { eq, and } from "drizzle-orm";
+import { getTeamSeatBlock } from "~/lib/refunds.server";
+import { TEAM_SEAT_BLOCK_MESSAGES } from "~/lib/refunds";
 
 function getCourseById(id: number) {
   return db.select().from(courses).where(eq(courses.id, id)).get();
@@ -50,6 +52,11 @@ function redeemCoupon(
 
   if (coupon.redeemedByUserId !== null) {
     return { ok: false, error: "Coupon has already been redeemed" };
+  }
+
+  const seatBlock = getTeamSeatBlock(coupon.purchaseId);
+  if (seatBlock) {
+    return { ok: false, error: TEAM_SEAT_BLOCK_MESSAGES[seatBlock] };
   }
 
   const existingEnrollment = db
@@ -136,10 +143,11 @@ export async function loader({ params, request }: Route.LoaderArgs) {
 
   const alreadyRedeemed = coupon.redeemedByUserId !== null;
   const alreadyEnrolled = isUserEnrolled(currentUserId, coupon.courseId);
+  const seatBlock = alreadyRedeemed ? null : getTeamSeatBlock(coupon.purchaseId);
 
   // Check country mismatch upfront so we can show a clear message
   let countryMismatch = false;
-  if (!alreadyRedeemed && !alreadyEnrolled) {
+  if (!alreadyRedeemed && !alreadyEnrolled && !seatBlock) {
     const userCountry = await resolveCountry(request);
     const purchase = db
       .select()
@@ -157,6 +165,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     alreadyRedeemed,
     alreadyEnrolled,
     countryMismatch,
+    seatBlockMessage: seatBlock ? TEAM_SEAT_BLOCK_MESSAGES[seatBlock] : null,
   };
 }
 
@@ -194,8 +203,14 @@ export default function Redeem({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
-  const { course, code, alreadyRedeemed, alreadyEnrolled, countryMismatch } =
-    loaderData;
+  const {
+    course,
+    code,
+    alreadyRedeemed,
+    alreadyEnrolled,
+    countryMismatch,
+    seatBlockMessage,
+  } = loaderData;
   const fetcher = useFetcher();
   const isSubmitting = fetcher.state !== "idle";
 
@@ -208,7 +223,8 @@ export default function Redeem({
   }, [fetcher.data, actionData]);
 
   // Determine which state to show
-  const canRedeem = !alreadyRedeemed && !alreadyEnrolled && !countryMismatch;
+  const canRedeem =
+    !alreadyRedeemed && !alreadyEnrolled && !seatBlockMessage && !countryMismatch;
 
   return (
     <div className="mx-auto max-w-2xl p-6 lg:p-8">
@@ -240,6 +256,16 @@ export default function Redeem({
               <p className="mt-2 text-sm text-muted-foreground">
                 Someone has already claimed this seat. Please ask the person who
                 shared this link for a new coupon.
+              </p>
+            </div>
+          ) : seatBlockMessage ? (
+            <div className="rounded-lg bg-amber-50 p-4 dark:bg-amber-900/20">
+              <div className="flex items-center justify-center gap-2 text-amber-700 dark:text-amber-400">
+                <AlertCircle className="size-5" />
+                <span className="font-medium">This seat is not available</span>
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {seatBlockMessage}
               </p>
             </div>
           ) : alreadyEnrolled ? (

@@ -21,8 +21,20 @@ import {
 import { AlertTriangle } from "lucide-react";
 import { data, isRouteErrorResponse, Link } from "react-router";
 import { db } from "~/db";
-import { and, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { formatPrice } from "~/lib/utils";
+import { REFUND_STATUS_LABELS } from "~/lib/refunds";
+import { RefundStatusBadge } from "~/components/refund-status-badge";
+
+// One line per status, in the glossary's words.
+const REFUND_STATUS_NOTES: Record<RefundStatus, string> = {
+  [RefundStatus.Requested]: "Waiting for an admin to decide.",
+  [RefundStatus.Approved]:
+    "Approved — your money is on its way. You keep access until it has been sent.",
+  [RefundStatus.Declined]: "Declined — nothing will be paid back.",
+  [RefundStatus.Refunded]:
+    "Refunded — your money has been sent.",
+};
 
 const settingsSchema = z.object({
   name: z.string().trim().min(1, "Name cannot be empty."),
@@ -55,24 +67,22 @@ export async function loader({ request }: Route.LoaderArgs) {
     throw data("User not found.", { status: 404 });
   }
 
-  const requestedRefunds = db
+  const refundRequests = db
     .select({
       id: refunds.id,
+      status: refunds.status,
       courseTitle: courses.title,
       courseSlug: courses.slug,
       refundAmount: purchases.amountPaid,
       reason: refunds.reason,
       requestedAt: refunds.requestedAt,
+      resolvedAt: refunds.resolvedAt,
     })
     .from(refunds)
     .innerJoin(purchases, eq(refunds.purchaseId, purchases.id))
     .innerJoin(courses, eq(purchases.courseId, courses.id))
-    .where(
-      and(
-        eq(purchases.userId, currentUserId),
-        eq(refunds.status, RefundStatus.Requested)
-      )
-    )
+    .where(eq(purchases.userId, currentUserId))
+    .orderBy(desc(refunds.requestedAt))
     .all();
 
   return {
@@ -83,7 +93,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       bio: currentUser.bio,
       role: currentUser.role,
     },
-    requestedRefunds,
+    refundRequests,
   };
 }
 
@@ -122,7 +132,7 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Settings({ loaderData }: Route.ComponentProps) {
-  const { user, requestedRefunds } = loaderData;
+  const { user, refundRequests } = loaderData;
   const fetcher = useFetcher();
   const nameInputRef = useRef<HTMLInputElement>(null);
 
@@ -209,18 +219,16 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
         </CardContent>
       </Card>
 
-      {requestedRefunds.length > 0 && (
+      {refundRequests.length > 0 && (
         <Card className="mt-8 max-w-md">
           <CardHeader>
-            <h2 className="text-lg font-semibold">Refund requested</h2>
+            <h2 className="text-lg font-semibold">Refunds</h2>
             <p className="text-sm text-muted-foreground">
-              {requestedRefunds.length === 1
-                ? "One refund request is waiting for an admin."
-                : `${requestedRefunds.length} refund requests are waiting for an admin.`}
+              Your refund requests and what an admin decided.
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            {requestedRefunds.map((refund) => (
+            {refundRequests.map((refund) => (
               <div key={refund.id} className="rounded-md border p-3">
                 <div className="flex items-start justify-between gap-3">
                   <Link
@@ -229,13 +237,16 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
                   >
                     {refund.courseTitle}
                   </Link>
-                  <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-                    Requested
-                  </span>
+                  <RefundStatusBadge status={refund.status} />
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {formatPrice(refund.refundAmount)} · requested{" "}
                   {new Date(refund.requestedAt).toLocaleDateString()}
+                  {refund.resolvedAt &&
+                    ` · ${REFUND_STATUS_LABELS[refund.status]} ${new Date(refund.resolvedAt).toLocaleDateString()}`}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {REFUND_STATUS_NOTES[refund.status]}
                 </p>
                 <p className="mt-2 text-sm">{refund.reason}</p>
               </div>
