@@ -14,6 +14,10 @@ _Avoid_: Learner, customer, user
 Staff who decide Refund Requests. An Instructor may be consulted but never decides.
 _Avoid_: Reviewer, support, team
 
+**Instructor**:
+A person who builds and edits the Courses they own and sees their enrolled and Lapsed Students. They speak only for their own Courses.
+_Avoid_: Teacher, Author, Creator
+
 ### Purchases
 
 **Purchase**:
@@ -31,8 +35,16 @@ A Student's access to one Course. It ends when their Refund for that Course is R
 _Avoid_: Access grant, subscription
 
 **Progress**:
-A Student's record of Lessons completed, quizzes attempted and video watched in a Course. It belongs to the Student, not the Enrollment, so it outlives a Refund and returns if they buy the Course again.
+A Student's record of Lessons completed, quizzes attempted and Watch Time in a Course. It belongs to the Student, not the Enrollment, so it outlives a Refund and returns if they buy the Course again.
 _Avoid_: Enrollment progress
+
+**Watch Time**:
+The seconds of video a Student has actually played in a Course: the furthest point reached in each Lesson, added up. Opening a Lesson does not count.
+_Avoid_: Viewed, Viewing time
+
+**Lapsed**:
+A Student who once had an Enrollment in a Course and no longer does, but keeps their Progress.
+_Avoid_: Refunded student, Former student, Inactive
 
 ### Refunds
 
@@ -53,7 +65,7 @@ The fourteen calendar days after a Purchase, including the whole of the fourteen
 _Avoid_: Cancel window, cooling-off period
 
 **Refund Eligibility**:
-Whether a Purchase may receive a Refund Request: no earlier Refund Request, no earlier Refund for the same Course, inside the Refund Window, under two hours watched, under half the Lessons completed, and no claimed Team Seat. It is decided only when the Refund Request is made.
+Whether a Purchase may receive a Refund Request: no earlier Refund Request, no earlier Refund for the same Course, inside the Refund Window, under two hours of Watch Time, under half the Lessons completed, and no claimed Team Seat. It is decided only when the Refund Request is made.
 _Avoid_: Cancellation offer
 
 ### Refund statuses
@@ -94,47 +106,3 @@ Tells the Student their money has been sent and their access to the Course has e
 
 **Chargeback**:
 A payment dispute the cardholder raises through their card issuer, outside this application. Never used to describe a Refund or Refund Request.
-
-### Other terms
-
-**Watch Limit**:
-A Refund is only offered on a course with under two hours watched. Past that, the Learner has had the course, and the refund form turns them away.
-_Avoid_: Watch cap, Viewing threshold
-
-**Refunds table**:
-`refunds` — one row per Refund. Columns: `id`, `purchase_id`, `status` (`open`, `approved`, `declined`), `reason`, `amount_refunded`, `requested_at`, `resolved_at`, `resolved_by_user_id`, `decision_note`.
-
-**refunded_at**:
-Nullable text column on `coupons`. An ISO timestamp, set on every unclaimed coupon when its team purchase is refunded. `getSeatAvailability` returns `"refunded"` for it.
-
-**resolved_by_user_id**:
-Integer column on `refunds`, referencing `users.id`. Null until an Admin approves or declines the Refund.
-
-**RefundRequestCard**:
-The component that draws one Refund Request on `/admin/refunds`, with its Approve and Decline buttons.
-
-**Button**:
-A clickable element that fires an action when the user presses it. Built on `~/components/ui/button`.
-
-**Component**:
-A React function that returns JSX.
-
-**cwd**:
-The directory the dev server was started from. Paths in `scripts/` resolve from here.
-
-**Loader**:
-The React Router function that fetches a route's data on the server before the page renders.
-
-**Slug**:
-The URL-safe name of a course, as in `/courses/:slug`.
-
-**Lapsed**:
-An Enrollment that is no longer active. Shown as a badge on the instructor's student roster.
-
-**Instructor**:
-Speaks for their own courses only. An Instructor builds and edits the courses they own, and sees the learners enrolled on them.
-_Avoid_: Teacher, Author, Creator
-
-**Watched**:
-Seconds of video a Learner has actually played in a course: the furthest point reached in each lesson, added up. Not lessons opened.
-_Avoid_: Viewed, Progress

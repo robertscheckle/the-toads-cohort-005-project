@@ -8,5 +8,5 @@ Every access check reads only whether an Enrollment row exists, so when an Admin
 
 ## Consequences
 
-- A refunded Student drops off the instructor's student list and out of "enrollments in range" analytics. Reports that need refunded Students must join through Purchases and Refund Requests.
+- A refunded Student stays on the instructor's student list as Lapsed, found through their Progress and Purchase rather than an Enrollment, but drops out of "enrollments in range" analytics. Reports that need refunded Students must join through Purchases and Refund Requests.
 - Only `enrolledAt` and `completedAt` are lost; the first is effectively the Purchase date and the second is almost always empty, because Refund Eligibility rules out Students who completed half the Lessons.
