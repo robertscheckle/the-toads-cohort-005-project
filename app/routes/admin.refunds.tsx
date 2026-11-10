@@ -18,6 +18,7 @@ import {
   listRefundRequests,
   type RefundReviewRow,
 } from "~/lib/refunds.server";
+import { sendEmail } from "~/lib/mailer.server";
 import { formatPrice } from "~/lib/utils";
 import { RefundStatusBadge } from "~/components/refund-status-badge";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
@@ -81,9 +82,7 @@ export async function action({ request }: Route.ActionArgs) {
     return data({ error: result.message }, { status: result.httpStatus });
   }
 
-  // There is no mail transport wired up yet, so the email goes to the log.
-  const { email } = result;
-  console.log(`[email] to=${email.to} subject=${email.subject}\n${email.body}`);
+  await sendEmail(result.email);
 
   return { success: true, status: result.status };
 }

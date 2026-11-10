@@ -205,8 +205,7 @@ export const TEAM_SEAT_BLOCK_LABELS: Record<
 };
 
 // ─── Refund emails ───
-// There is no mail transport wired up yet, so built messages go to the server
-// log.
+// Built here, sent by the caller through sendEmail (~/lib/mailer.server).
 
 export type RefundEmail = { to: string; subject: string; body: string };
 

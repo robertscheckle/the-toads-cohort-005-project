@@ -11,6 +11,7 @@ import {
   buildRefundRequestedEmail,
 } from "~/lib/refunds";
 import { getRefundOffer } from "~/lib/refunds.server";
+import { sendEmail } from "~/lib/mailer.server";
 
 const refundParamsSchema = z.object({
   slug: z.string().min(1),
@@ -85,7 +86,7 @@ export async function action({ params, request }: Route.ActionArgs) {
     refundAmount: offer.refundAmount,
   });
 
-  console.log(`[email] to=${email.to} subject=${email.subject}\n${email.body}`);
+  await sendEmail(email);
 
   return redirect("/settings");
 }
