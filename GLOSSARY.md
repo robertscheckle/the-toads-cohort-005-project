@@ -116,6 +116,10 @@ _Avoid_: Dismissed, Deleted, Cleared
 A Notification type a person has chosen to stop receiving. It affects only future Notifications of that type, never ones already received or any email.
 _Avoid_: Unsubscribed, Disabled, Turned off
 
+**Grouped Notification**:
+One Notification standing for several events of the same type about the same thing, such as several replies to one comment. It is read, archived and counted as one Notification.
+_Avoid_: Digest, Batch, Summary
+
 **Mandatory Notification type**:
 A Notification type that cannot be muted: Refund Requested, Refund Approved, Refund Declined and Refunded.
 _Avoid_: Required, Critical
