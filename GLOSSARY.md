@@ -102,6 +102,46 @@ Tells the Student an Admin rejected their Refund Request.
 **Refunded email**:
 Tells the Student their money has been sent and their access to the Course has ended, or for a team Purchase that the unclaimed Team Seats from this Purchase are no longer available.
 
+### Notifications
+
+**Notification**:
+A message shown inside Cadence to one Student, Instructor or Admin about something that happened in a Course or Purchase they are involved in. It is separate from any email sent for the same event.
+_Avoid_: Alert, Message, Inbox item, Activity
+
+### Notification types
+
+Each type is named `<Subject> <Past-tense verb> Notification`. Nobody gets a Notification for their own action, or one about something they can no longer open.
+
+**Refund Requested Notification**:
+Tells every Admin that a Refund Request is waiting for a decision.
+
+**Refund Approved Notification**:
+Tells the Student an Admin accepted their Refund Request and payment is on its way.
+
+**Refund Declined Notification**:
+Tells the Student an Admin rejected their Refund Request.
+
+**Refunded Notification**:
+Tells the Student their money has been sent and their access to the Course has ended, or for a team Purchase that its unclaimed Team Seats are no longer available.
+
+**Comment Replied Notification**:
+Tells the author of a comment on a Lesson that someone replied to it.
+
+**Comment Posted Notification**:
+Tells an Instructor that a new comment, not a reply, was posted on one of their Lessons.
+
+**Course Purchased Notification**:
+Tells an Instructor that a Student made a Purchase of their Course, for themselves or for Team Seats.
+
+**Purchase Refunded Notification**:
+Tells an Instructor that a Purchase of their Course was Refunded.
+
+**Course Rated Notification**:
+Tells an Instructor that a Student rated their Course for the first time.
+
+**Team Seat Claimed Notification**:
+Tells the Student who made a team Purchase that one of its Team Seats was claimed.
+
 ### Not used for Refunds
 
 **Chargeback**:
