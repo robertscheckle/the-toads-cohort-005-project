@@ -108,6 +108,18 @@ Tells the Student their money has been sent and their access to the Course has e
 A message shown inside Cadence to one Student, Instructor or Admin about something that happened in a Course or Purchase they are involved in. It is separate from any email sent for the same event.
 _Avoid_: Alert, Message, Inbox item, Activity
 
+**Archived Notification**:
+A Notification its recipient has removed from their list. It is hidden, not deleted, and no longer counts as unread.
+_Avoid_: Dismissed, Deleted, Cleared
+
+**Muted Notification type**:
+A Notification type a person has chosen to stop receiving. It affects only future Notifications of that type, never ones already received or any email.
+_Avoid_: Unsubscribed, Disabled, Turned off
+
+**Mandatory Notification type**:
+A Notification type that cannot be muted: Refund Requested, Refund Approved, Refund Declined and Refunded.
+_Avoid_: Required, Critical
+
 ### Notification types
 
 Each type is named `<Subject> <Past-tense verb> Notification`. Nobody gets a Notification for their own action, or one about something they can no longer open.
