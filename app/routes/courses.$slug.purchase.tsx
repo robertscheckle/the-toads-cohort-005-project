@@ -36,6 +36,7 @@ import { UserAvatar } from "~/components/user-avatar";
 import { data } from "react-router";
 import { formatDuration, formatPrice } from "~/lib/utils";
 import { resolveCountry } from "~/lib/country.server";
+import { notifyCoursePurchased } from "~/lib/notification-events.server";
 import { calculatePppPrice, getCountryTierInfo, COUNTRIES } from "~/lib/ppp";
 import { parseFormData, parseParams } from "~/lib/validation";
 
@@ -367,15 +368,28 @@ export async function action({ params, request }: Route.ActionArgs) {
     if (isUserEnrolled(currentUserId, course.id)) {
       throw redirect(`/courses/${slug}`);
     }
-    createPurchase(currentUserId, course.id, pppPrice, country);
+    const purchase = createPurchase(
+      currentUserId,
+      course.id,
+      pppPrice,
+      country
+    );
     enrollUser(currentUserId, course.id, false, false);
+    await notifyCoursePurchased(purchase.id);
     throw redirect(`/courses/${slug}/welcome`);
   }
 
   // Team purchase — user does NOT get enrolled themselves
   const { quantity } = parsed.data;
   const totalPrice = pppPrice * quantity;
-  createTeamPurchase(currentUserId, course.id, totalPrice, country, quantity);
+  const { purchase } = createTeamPurchase(
+    currentUserId,
+    course.id,
+    totalPrice,
+    country,
+    quantity
+  );
+  await notifyCoursePurchased(purchase.id);
   throw redirect(`/team`);
 }
 
