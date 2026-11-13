@@ -38,6 +38,9 @@ export const MANDATORY_NOTIFICATION_TYPES: readonly NotificationType[] = [
   "refunded",
 ];
 
+/** Shown instead of "Mute … Notifications" for a Mandatory type. */
+export const MANDATORY_MUTE_MESSAGE = "Refund Notifications can't be muted";
+
 export function isNotificationType(value: string): value is NotificationType {
   return (NOTIFICATION_TYPES as readonly string[]).includes(value);
 }
