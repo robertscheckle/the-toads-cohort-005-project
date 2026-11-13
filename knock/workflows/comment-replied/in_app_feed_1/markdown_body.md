@@ -1,0 +1,1 @@
+**{{ data.replier_name }}**{% if total_actors > 1 %} and {{ total_actors | minus: 1 }} {% if total_actors == 2 %}other{% else %}others{% endif %}{% endif %} replied to your comment on **{{ data.lesson_title }}** in {{ data.course_title }}.
