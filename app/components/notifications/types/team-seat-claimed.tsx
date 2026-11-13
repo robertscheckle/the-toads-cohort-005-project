@@ -1,6 +1,11 @@
 import { Users } from "lucide-react";
 import type { NotificationItem } from "../notifications-provider";
-import { Bold, actorsPhrase, dataText } from "../row-definition";
+import {
+  Bold,
+  actorsPhrase,
+  dataText,
+  withLatestActorFirst,
+} from "../row-definition";
 import type { NotificationRowDefinition } from "../row-definition";
 
 /**
@@ -22,8 +27,8 @@ export const teamSeatClaimedRow: NotificationRowDefinition = {
   tone: "text-emerald-600",
   Sentence: ({ item }) => (
     <>
-      <Bold>{actorsPhrase(item)}</Bold> claimed{" "}
-      {item.totalActivities > 1 ? "Team Seats" : "a Team Seat"} in{" "}
+      <Bold>{actorsPhrase(withLatestActorFirst(item, "claimer_name"))}</Bold>{" "}
+      claimed {item.totalActivities > 1 ? "Team Seats" : "a Team Seat"} in{" "}
       <Bold>{dataText(item, "course_title")}</Bold> ({claimedSeats(item)} of{" "}
       {dataText(item, "total_seats")} claimed)
     </>

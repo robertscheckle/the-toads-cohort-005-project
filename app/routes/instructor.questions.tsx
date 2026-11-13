@@ -13,7 +13,11 @@ import { UserAvatar } from "~/components/user-avatar";
 import { AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
 import { cn, daysSince, formatRelativeTime } from "~/lib/utils";
 import { MAX_COMMENT_LENGTH } from "~/lib/comments";
-import { createComment } from "~/lib/comments.server";
+import {
+  createComment,
+  getCommentById,
+  getCourseForLesson,
+} from "~/lib/comments.server";
 import { notifyCommentCreated } from "~/lib/notification-events.server";
 import { parseFormData } from "~/lib/validation";
 import { db } from "~/db";
@@ -98,25 +102,6 @@ function getUnansweredQuestions(instructorId: number | null): QueuedQuestion[] {
     .all();
 }
 
-function getCommentById(commentId: number) {
-  return db.select().from(comments).where(eq(comments.id, commentId)).get();
-}
-
-function getCourseForLesson(lessonId: number) {
-  return db
-    .select({
-      courseId: courses.id,
-      courseTitle: courses.title,
-      courseSlug: courses.slug,
-      instructorId: courses.instructorId,
-    })
-    .from(lessons)
-    .innerJoin(modules, eq(lessons.moduleId, modules.id))
-    .innerJoin(courses, eq(modules.courseId, courses.id))
-    .where(eq(lessons.id, lessonId))
-    .get();
-}
-
 // A question sitting this long without an answer gets called out visually.
 const STALE_AFTER_DAYS = 3;
 
@@ -166,12 +151,12 @@ export async function action({ request }: Route.ActionArgs) {
 
   // Answering as the course's voice — so it must be the course's own
   // instructor, or an admin.
-  const access = await requireStaff(request, course.courseId);
+  const { userId } = await requireStaff(request, course.courseId);
 
   let reply;
   try {
     reply = createComment({
-      userId: access.userId!,
+      userId,
       lessonId: question.lessonId,
       parentId: question.id,
       body: parsed.data.body,

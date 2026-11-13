@@ -356,6 +356,39 @@ describe("notifyCommentCreated: answering marks it read", () => {
     expect(unreadOf(notifier, f.ivy.id)).toEqual([]);
   });
 
+  it("reads the events of only the Notifications about the answered comment or its Lesson", async () => {
+    const notifier = recordingNotifier();
+    const otherLesson = testDb
+      .insert(lessons)
+      .values({ moduleId: f.lesson.moduleId, title: "Generics", position: 2 })
+      .returning()
+      .get();
+    const elsewhere = testDb
+      .insert(comments)
+      .values({ userId: f.liam.id, lessonId: otherLesson.id, body: "Hi" })
+      .returning()
+      .get();
+    const question = comment(f.liam.id);
+    await notifyCommentCreated(elsewhere.id, notifier);
+    await notifyCommentCreated(question.id, notifier);
+    // Ivy also has a Comment Replied about another thread.
+    const ivyThread = comment(f.ivy.id);
+    await notifyCommentCreated(comment(f.mia.id, ivyThread.id).id, notifier);
+
+    const answer = comment(f.ivy.id, question.id);
+    await notifyCommentCreated(answer.id, notifier);
+
+    const aboutQuestion = notifier.messages.find(
+      (m) =>
+        m.type === "comment-posted" && m.events[0].comment_id === question.id
+    );
+    expect(notifier.eventReads).toEqual([aboutQuestion?.id]);
+    expect(unreadOf(notifier, f.ivy.id)).toEqual([
+      { type: "comment-posted", commentIds: [elsewhere.id] },
+      { type: "comment-replied", commentIds: [ivyThread.id] },
+    ]);
+  });
+
   it("logs a failure to mark read and still sends the Comment Replied", async () => {
     const notifier = recordingNotifier();
     const question = comment(f.liam.id);

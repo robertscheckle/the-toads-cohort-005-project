@@ -9,7 +9,12 @@ import {
   CommentThread,
   type RenderedComment,
 } from "~/components/comment-thread";
-import { assertValidCommentBody, createComment } from "~/lib/comments.server";
+import {
+  assertValidCommentBody,
+  createComment,
+  getCommentById,
+  getCourseForLesson,
+} from "~/lib/comments.server";
 import { notifyCommentCreated } from "~/lib/notification-events.server";
 import { db } from "~/db";
 import {
@@ -307,25 +312,6 @@ function calculateWatchProgress(
   const maxPosition = result?.maxPos ?? 0;
 
   return Math.min(Math.round((maxPosition / videoDurationSeconds) * 100), 100);
-}
-
-function getCourseForLesson(lessonId: number) {
-  return db
-    .select({
-      courseId: courses.id,
-      courseTitle: courses.title,
-      courseSlug: courses.slug,
-      instructorId: courses.instructorId,
-    })
-    .from(lessons)
-    .innerJoin(modules, eq(lessons.moduleId, modules.id))
-    .innerJoin(courses, eq(modules.courseId, courses.id))
-    .where(eq(lessons.id, lessonId))
-    .get();
-}
-
-function getCommentById(commentId: number) {
-  return db.select().from(comments).where(eq(comments.id, commentId)).get();
 }
 
 function getLessonThread(lessonId: number): ThreadComment[] {

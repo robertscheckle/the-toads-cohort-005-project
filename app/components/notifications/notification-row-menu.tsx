@@ -1,5 +1,4 @@
-import { useEffect } from "react";
-import { useFetcher, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 import { DropdownMenu } from "radix-ui";
 import { toast } from "sonner";
 import {
@@ -20,39 +19,38 @@ import {
   NOTIFICATION_TYPE_LABELS,
   type NotificationType,
 } from "~/lib/notifications";
+import {
+  SAVE_PREFERENCE_FAILED_MESSAGE,
+  saveNotificationTypeEnabled,
+} from "./save-notification-preference";
 
 const ITEM_CLASS =
   "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm outline-none data-[highlighted]:bg-accent data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50";
 
 /**
  * Mutes a type through the same action as the settings page's switch, then
- * toasts a pointer to Settings → Notifications. Lives in the always-mounted
- * menu root: the menu's content unmounts as soon as an item is selected.
+ * toasts a pointer to Settings → Notifications, or that it failed (the action
+ * throws when it refuses).
  */
-function useMuteNotificationType(type: NotificationType | null) {
-  const fetcher = useFetcher<{ ok: boolean; error: string | null }>();
+function useMuteNotificationType() {
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (fetcher.state !== "idle" || !fetcher.data || !type) return;
-    if (fetcher.data.ok) {
-      toast.success(`${NOTIFICATION_TYPE_LABELS[type]} Notifications muted.`, {
-        description: "Turn them back on in Settings → Notifications.",
-        action: {
-          label: "Settings",
-          onClick: () => navigate("/settings#notifications"),
-        },
-      });
-    } else if (fetcher.data.error) {
-      toast.error(fetcher.data.error);
+  return async (type: NotificationType) => {
+    try {
+      await saveNotificationTypeEnabled(type, false);
+    } catch (error) {
+      console.error("[notifications] mute failed:", error);
+      toast.error(SAVE_PREFERENCE_FAILED_MESSAGE);
+      return;
     }
-  }, [fetcher.state, fetcher.data, type, navigate]);
-
-  return (mutedType: NotificationType) =>
-    fetcher.submit(
-      { type: mutedType, enabled: "false" },
-      { method: "post", action: "/api/notification-preferences" }
-    );
+    toast.success(`${NOTIFICATION_TYPE_LABELS[type]} Notifications muted.`, {
+      description: "Turn them back on in Settings → Notifications.",
+      action: {
+        label: "Settings",
+        onClick: () => navigate("/settings#notifications"),
+      },
+    });
+  };
 }
 
 /**
@@ -86,7 +84,7 @@ function MuteTypeItem({
 /** The row's ⋮ menu: mark read / unread, archive / move back, mute type. */
 export function NotificationRowMenu({ item }: { item: NotificationItem }) {
   const { markRead, markUnread, archive, unarchive } = useNotifications();
-  const mute = useMuteNotificationType(item.type);
+  const mute = useMuteNotificationType();
 
   return (
     <DropdownMenu.Root>
@@ -135,12 +133,8 @@ export function NotificationRowMenu({ item }: { item: NotificationItem }) {
               <Archive className="size-4" /> Archive
             </DropdownMenu.Item>
           )}
-          {item.type && (
-            <>
-              <DropdownMenu.Separator className="my-1 h-px bg-border" />
-              <MuteTypeItem type={item.type} onMute={mute} />
-            </>
-          )}
+          <DropdownMenu.Separator className="my-1 h-px bg-border" />
+          <MuteTypeItem type={item.type} onMute={(type) => void mute(type)} />
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>

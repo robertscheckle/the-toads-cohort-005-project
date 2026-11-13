@@ -362,6 +362,8 @@ function Replies({
   );
 }
 
+const COMMENTS_ANCHOR_ID = "comments";
+
 export function CommentThread({
   comments,
   currentUserId,
@@ -376,8 +378,18 @@ export function CommentThread({
   canPost: boolean;
   instructorName: string;
 }) {
+  // A Grouped Comment Posted Notification links to `#comments`, this section.
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (hash === `#${COMMENTS_ANCHOR_ID}`) {
+      document
+        .getElementById(COMMENTS_ANCHOR_ID)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [hash]);
+
   return (
-    <Card className="mb-8">
+    <Card id={COMMENTS_ANCHOR_ID} className="mb-8 scroll-mt-6">
       <CardContent className="p-6">
         <div className="mb-4 flex items-center gap-2">
           <MessageSquare className="size-5 text-primary" />

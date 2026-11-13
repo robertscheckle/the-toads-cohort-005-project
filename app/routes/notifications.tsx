@@ -29,8 +29,17 @@ function isTab(value: string): value is NotificationTab {
 }
 
 export default function NotificationsPage() {
-  const { items, unreadCount, loading, refetch, markAllRead, feedClient } =
-    useNotifications();
+  const {
+    items,
+    unreadCount,
+    loading,
+    hasMore,
+    loadingMore,
+    loadMore,
+    refetch,
+    markAllRead,
+    feedClient,
+  } = useNotifications();
   const [tab, setTab] = useState<NotificationTab>("all");
   const { heldIds, showHeld } = useHeldArrivals(feedClient);
 
@@ -107,6 +116,20 @@ export default function NotificationsPage() {
         </p>
       ) : (
         <EmptyState archived={tab === "archived"} />
+      )}
+
+      {/* Older (and archived) Notifications are a page further back. */}
+      {!loading && hasMore && (
+        <div className="mt-4 flex justify-center">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void loadMore()}
+            disabled={loadingMore}
+          >
+            {loadingMore ? "Loading…" : "Load more"}
+          </Button>
+        </div>
       )}
     </div>
   );
