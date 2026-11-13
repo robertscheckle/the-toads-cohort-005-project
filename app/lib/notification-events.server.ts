@@ -1,6 +1,13 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull, type SQL } from "drizzle-orm";
 import { db } from "~/db";
-import { courses, purchases, refunds, users, UserRole } from "~/db/schema";
+import {
+  coupons,
+  courses,
+  purchases,
+  refunds,
+  users,
+  UserRole,
+} from "~/db/schema";
 import {
   defaultNotifier,
   neverThrow,
@@ -72,4 +79,66 @@ export async function notifyRefundRequested(
     course_title: request.courseTitle,
     url: "/admin/refunds",
   });
+}
+
+// ─── Team Seat Claimed ───
+
+/**
+ * Team Seat `couponId` was just claimed: tell the Student who made that team
+ * Purchase, with how many of its Team Seats are now claimed. Nothing goes to
+ * the Instructor, and nothing when the buyer claims their own seat.
+ */
+export async function notifyTeamSeatClaimed(
+  couponId: number,
+  notifier: Notifier = defaultNotifier()
+): Promise<void> {
+  const seat = db
+    .select({
+      purchaseId: coupons.purchaseId,
+      claimerId: coupons.redeemedByUserId,
+      buyerId: purchases.userId,
+      courseTitle: courses.title,
+    })
+    .from(coupons)
+    .innerJoin(purchases, eq(purchases.id, coupons.purchaseId))
+    .innerJoin(courses, eq(courses.id, coupons.courseId))
+    .where(eq(coupons.id, couponId))
+    .get();
+  if (!seat || seat.claimerId === null) return;
+
+  const claimer = db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(eq(users.id, seat.claimerId))
+    .get();
+  const buyer = db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(eq(users.id, seat.buyerId))
+    .get();
+  if (!claimer || !buyer) return;
+
+  const actor = person(claimer);
+  const recipients = withoutActor([person(buyer)], actor);
+  if (recipients.length === 0) return;
+
+  const totalSeats = countSeats(eq(coupons.purchaseId, seat.purchaseId));
+  const claimedSeats = countSeats(
+    and(eq(coupons.purchaseId, seat.purchaseId), isNotNull(coupons.redeemedAt))
+  );
+
+  await neverThrow(notifier).notify("team-seat-claimed", recipients, actor, {
+    coupon_id: couponId,
+    purchase_id: seat.purchaseId,
+    claimer_name: claimer.name,
+    course_title: seat.courseTitle,
+    claimed_seats: claimedSeats,
+    total_seats: totalSeats,
+    url: "/team",
+  });
+}
+
+function countSeats(where: SQL | undefined): number {
+  const row = db.select({ seats: count() }).from(coupons).where(where).get();
+  return row?.seats ?? 0;
 }
