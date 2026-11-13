@@ -268,3 +268,117 @@ describe("notifyCommentCreated: failures", () => {
     expect(notifier.calls).toEqual([]);
   });
 });
+
+describe("notifyCommentCreated: answering marks it read", () => {
+  /** The user's unread Notifications: type and the comment id of each event. */
+  function unreadOf(
+    notifier: ReturnType<typeof recordingNotifier>,
+    userId: number
+  ) {
+    return notifier.messages
+      .filter((m) => m.recipientId === String(userId) && !m.read)
+      .map((m) => ({
+        type: m.type,
+        commentIds: m.events.map((e) => e.comment_id),
+      }));
+  }
+
+  it("marks the Instructor's Comment Posted read when they reply to that comment", async () => {
+    const notifier = recordingNotifier();
+    const question = comment(f.liam.id);
+    await notifyCommentCreated(question.id, notifier);
+    expect(unreadOf(notifier, f.ivy.id)).toEqual([
+      { type: "comment-posted", commentIds: [question.id] },
+    ]);
+
+    const answer = comment(f.ivy.id, question.id);
+    await notifyCommentCreated(answer.id, notifier);
+
+    expect(unreadOf(notifier, f.ivy.id)).toEqual([]);
+  });
+
+  it("marks the author's Comment Replied read when they reply in that thread, leaving their other Notifications unread", async () => {
+    const notifier = recordingNotifier();
+    const first = comment(f.liam.id);
+    const second = comment(f.liam.id);
+    for (const parentId of [first.id, second.id]) {
+      const answer = comment(f.ivy.id, parentId);
+      await notifyCommentCreated(answer.id, notifier);
+    }
+
+    const followUp = comment(f.liam.id, first.id);
+    await notifyCommentCreated(followUp.id, notifier);
+
+    expect(unreadOf(notifier, f.liam.id)).toEqual([
+      { type: "comment-replied", commentIds: [second.id] },
+    ]);
+    expect(notifier.calls.filter((c) => c.operation === "markRead")).toEqual([
+      { operation: "markRead", notificationIds: [notifier.messages[0].id] },
+    ]);
+  });
+
+  it("leaves the Instructor's Comment Posted unread when an Admin answers it", async () => {
+    const notifier = recordingNotifier();
+    const question = comment(f.liam.id);
+    await notifyCommentCreated(question.id, notifier);
+
+    const adminAnswer = comment(f.ada.id, question.id);
+    await notifyCommentCreated(adminAnswer.id, notifier);
+
+    expect(unreadOf(notifier, f.ivy.id)).toEqual([
+      { type: "comment-posted", commentIds: [question.id] },
+    ]);
+    expect(notifier.calls.map((c) => c.operation)).not.toContain("markRead");
+  });
+
+  it("keeps a Grouped Comment Posted unread until the Instructor has replied to every comment in it", async () => {
+    const notifier = recordingNotifier(
+      {},
+      { groupBy: { "comment-posted": "lesson_id" } }
+    );
+    const liamQuestion = comment(f.liam.id);
+    const miaQuestion = comment(f.mia.id);
+    await notifyCommentCreated(liamQuestion.id, notifier);
+    await notifyCommentCreated(miaQuestion.id, notifier);
+    expect(unreadOf(notifier, f.ivy.id)).toEqual([
+      { type: "comment-posted", commentIds: [liamQuestion.id, miaQuestion.id] },
+    ]);
+
+    // Mia's is the group's latest event; Liam's is still unanswered.
+    await notifyCommentCreated(comment(f.ivy.id, miaQuestion.id).id, notifier);
+    expect(unreadOf(notifier, f.ivy.id)).toHaveLength(1);
+
+    // Someone else's reply to Liam's doesn't count.
+    await notifyCommentCreated(comment(f.ada.id, liamQuestion.id).id, notifier);
+    expect(unreadOf(notifier, f.ivy.id)).toHaveLength(1);
+
+    await notifyCommentCreated(comment(f.ivy.id, liamQuestion.id).id, notifier);
+    expect(unreadOf(notifier, f.ivy.id)).toEqual([]);
+  });
+
+  it("logs a failure to mark read and still sends the Comment Replied", async () => {
+    const notifier = recordingNotifier();
+    const question = comment(f.liam.id);
+    await notifyCommentCreated(question.id, notifier);
+    notifier.markRead = async () => {
+      throw new Error("Knock is down");
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const answer = comment(f.ivy.id, question.id);
+    await expect(
+      notifyCommentCreated(answer.id, notifier)
+    ).resolves.toBeUndefined();
+
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("markRead"),
+      expect.any(Error)
+    );
+    expect(notifier.calls.at(-1)).toMatchObject({
+      operation: "notify",
+      type: "comment-replied",
+      recipients: [{ id: String(f.liam.id), name: "Liam" }],
+    });
+    log.mockRestore();
+  });
+});
