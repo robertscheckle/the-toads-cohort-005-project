@@ -1,7 +1,8 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, count, eq } from "drizzle-orm";
 import { db } from "~/db";
 import {
   comments,
+  coupons,
   courses,
   enrollments,
   lessons,
@@ -234,4 +235,59 @@ export async function notifyCommentCreated(
   await notifyCommentReplied(context, context.parentId, safeNotifier);
   // "Answering marks it read" (#31) goes here: the replier
   // (context.authorId) answered top-level comment context.parentId.
+}
+
+// ─── Course Purchased ───
+
+/**
+ * A Student made Purchase `purchaseId` (for themselves or for Team Seats):
+ * tell the Instructor who owns the Course. Claiming a Team Seat later is not a
+ * Purchase and sends the Instructor nothing.
+ */
+export async function notifyCoursePurchased(
+  purchaseId: number,
+  notifier: Notifier = defaultNotifier()
+): Promise<void> {
+  const purchase = db
+    .select({
+      buyerId: users.id,
+      buyerName: users.name,
+      courseId: courses.id,
+      courseTitle: courses.title,
+      instructorId: courses.instructorId,
+    })
+    .from(purchases)
+    .innerJoin(users, eq(users.id, purchases.userId))
+    .innerJoin(courses, eq(courses.id, purchases.courseId))
+    .where(eq(purchases.id, purchaseId))
+    .get();
+  if (!purchase) return;
+
+  const instructor = db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(eq(users.id, purchase.instructorId))
+    .get();
+  if (!instructor) return;
+
+  // A team Purchase is one with Team Seats; a personal Purchase has none.
+  const teamSeats =
+    db
+      .select({ seats: count() })
+      .from(coupons)
+      .where(eq(coupons.purchaseId, purchaseId))
+      .get()?.seats ?? 0;
+
+  const actor = person({ id: purchase.buyerId, name: purchase.buyerName });
+  const recipients = withoutActor([person(instructor)], actor);
+  if (recipients.length === 0) return;
+
+  await neverThrow(notifier).notify("course-purchased", recipients, actor, {
+    purchase_id: purchaseId,
+    course_id: purchase.courseId,
+    buyer_name: purchase.buyerName,
+    course_title: purchase.courseTitle,
+    team_seats: teamSeats,
+    url: `/instructor/${purchase.courseId}/students`,
+  });
 }
