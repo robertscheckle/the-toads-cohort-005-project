@@ -19,7 +19,7 @@ export function NotificationRow({ item }: { item: NotificationItem }) {
   const { icon: Icon, tone, Sentence, href } = rowDefinitionFor(item.type);
   const unread = !item.read;
   const meta = [
-    item.type ? NOTIFICATION_TYPE_LABELS[item.type] : "Notification",
+    NOTIFICATION_TYPE_LABELS[item.type],
     item.totalActivities > 1 ? `${item.totalActivities} events` : null,
     formatRelativeTime(item.insertedAt),
   ]

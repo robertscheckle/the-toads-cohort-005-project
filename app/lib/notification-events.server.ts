@@ -1,13 +1,4 @@
-import {
-  and,
-  asc,
-  count,
-  eq,
-  inArray,
-  isNotNull,
-  isNull,
-  type SQL,
-} from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "~/db";
 import {
   comments,
@@ -40,8 +31,6 @@ import {
 //
 // None of these throw because of the Notifier: it is always wrapped in
 // neverThrow().
-//
-// Uses positional parameters (project convention).
 
 function person(user: { id: number; name: string }): NotificationPerson {
   return { id: String(user.id), name: user.name };
@@ -53,6 +42,14 @@ function withoutActor(
   actor: NotificationPerson
 ): NotificationPerson[] {
   return recipients.filter((recipient) => recipient.id !== actor.id);
+}
+
+function getUser(userId: number) {
+  return db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(eq(users.id, userId))
+    .get();
 }
 
 function listAdmins() {
@@ -122,41 +119,41 @@ export async function notifyTeamSeatClaimed(
     .get();
   if (!seat || seat.claimerId === null) return;
 
-  const claimer = db
-    .select({ id: users.id, name: users.name })
-    .from(users)
-    .where(eq(users.id, seat.claimerId))
-    .get();
-  const buyer = db
-    .select({ id: users.id, name: users.name })
-    .from(users)
-    .where(eq(users.id, seat.buyerId))
-    .get();
+  const claimer = getUser(seat.claimerId);
+  const buyer = getUser(seat.buyerId);
   if (!claimer || !buyer) return;
 
   const actor = person(claimer);
   const recipients = withoutActor([person(buyer)], actor);
   if (recipients.length === 0) return;
 
-  const totalSeats = countSeats(eq(coupons.purchaseId, seat.purchaseId));
-  const claimedSeats = countSeats(
-    and(eq(coupons.purchaseId, seat.purchaseId), isNotNull(coupons.redeemedAt))
-  );
+  const seats = countTeamSeats(seat.purchaseId);
 
   await neverThrow(notifier).notify("team-seat-claimed", recipients, actor, {
     coupon_id: couponId,
     purchase_id: seat.purchaseId,
     claimer_name: claimer.name,
     course_title: seat.courseTitle,
-    claimed_seats: claimedSeats,
-    total_seats: totalSeats,
+    claimed_seats: seats.claimed,
+    total_seats: seats.total,
     url: "/team",
   });
 }
 
-function countSeats(where: SQL | undefined): number {
-  const row = db.select({ seats: count() }).from(coupons).where(where).get();
-  return row?.seats ?? 0;
+/**
+ * How many Team Seats Purchase `purchaseId` has, and how many are claimed. A
+ * team Purchase is one with Team Seats; a personal Purchase has none.
+ */
+function countTeamSeats(purchaseId: number): {
+  total: number;
+  claimed: number;
+} {
+  const row = db
+    .select({ total: count(), claimed: count(coupons.redeemedAt) })
+    .from(coupons)
+    .where(eq(coupons.purchaseId, purchaseId))
+    .get();
+  return { total: row?.total ?? 0, claimed: row?.claimed ?? 0 };
 }
 
 // ─── Comment created: Comment Replied and Comment Posted ───
@@ -218,11 +215,7 @@ async function notifyCommentPosted(
   context: CommentContext,
   notifier: Notifier
 ): Promise<void> {
-  const instructor = db
-    .select({ id: users.id, name: users.name })
-    .from(users)
-    .where(eq(users.id, context.instructorId))
-    .get();
+  const instructor = getUser(context.instructorId);
   if (!instructor) return;
 
   const actor = person({ id: context.authorId, name: context.authorName });
@@ -307,7 +300,12 @@ export async function notifyCommentCreated(
   }
 
   await notifyCommentReplied(context, context.parentId, safeNotifier);
-  await markAnsweredRead(context.authorId, context.parentId, safeNotifier);
+  await markAnsweredRead(
+    context.authorId,
+    context.parentId,
+    context.lessonId,
+    safeNotifier
+  );
 }
 
 /**
@@ -316,18 +314,26 @@ export async function notifyCommentCreated(
  * Notifications about it are marked read, in one batch. A Grouped one (Comment
  * Posted groups per Lesson) is marked read only once the replier has replied
  * to every comment in it. Only the recipient's own replies count.
+ *
+ * Only Notifications that can hold the comment are listed, by the key each
+ * type is grouped on: Comment Replied per top-level comment, Comment Posted
+ * per Lesson (`lessonId`, the comment's Lesson).
  */
 async function markAnsweredRead(
   replierId: number,
   topLevelId: number,
+  lessonId: number,
   notifier: Notifier
 ): Promise<void> {
   const unread = (
-    await Promise.all(
-      (["comment-replied", "comment-posted"] as const).map((type) =>
-        notifier.listUnread(type, String(replierId))
-      )
-    )
+    await Promise.all([
+      notifier.listUnread("comment-replied", String(replierId), {
+        comment_id: topLevelId,
+      }),
+      notifier.listUnread("comment-posted", String(replierId), {
+        lesson_id: lessonId,
+      }),
+    ])
   ).flat();
   const commentIdsOf = (notification: UnreadNotification) =>
     notification.events.map((event) => Number(event.comment_id));
@@ -389,20 +395,8 @@ export async function notifyCoursePurchased(
     .get();
   if (!purchase) return;
 
-  const instructor = db
-    .select({ id: users.id, name: users.name })
-    .from(users)
-    .where(eq(users.id, purchase.instructorId))
-    .get();
+  const instructor = getUser(purchase.instructorId);
   if (!instructor) return;
-
-  // A team Purchase is one with Team Seats; a personal Purchase has none.
-  const teamSeats =
-    db
-      .select({ seats: count() })
-      .from(coupons)
-      .where(eq(coupons.purchaseId, purchaseId))
-      .get()?.seats ?? 0;
 
   const actor = person({ id: purchase.buyerId, name: purchase.buyerName });
   const recipients = withoutActor([person(instructor)], actor);
@@ -413,7 +407,7 @@ export async function notifyCoursePurchased(
     course_id: purchase.courseId,
     buyer_name: purchase.buyerName,
     course_title: purchase.courseTitle,
-    team_seats: teamSeats,
+    team_seats: countTeamSeats(purchaseId).total,
     url: `/instructor/${purchase.courseId}/students`,
   });
 }
@@ -450,11 +444,7 @@ export async function notifyCourseRated(
     .get();
   if (!rating) return;
 
-  const instructor = db
-    .select({ id: users.id, name: users.name })
-    .from(users)
-    .where(eq(users.id, rating.instructorId))
-    .get();
+  const instructor = getUser(rating.instructorId);
   if (!instructor) return;
 
   const actor = person({ id: rating.studentId, name: rating.studentName });
@@ -472,14 +462,6 @@ export async function notifyCourseRated(
 }
 
 // ─── Refund decisions ───
-
-function getUser(userId: number) {
-  return db
-    .select({ id: users.id, name: users.name })
-    .from(users)
-    .where(eq(users.id, userId))
-    .get();
-}
 
 /**
  * An Admin decided Refund Request `refundRequestId`; call right after the
@@ -515,41 +497,41 @@ export async function notifyRefundDecided(
   const admin = getUser(decided.adminId);
   if (!admin) return;
 
-  const safe = neverThrow(notifier);
+  const safeNotifier = neverThrow(notifier);
   const actor = person(admin);
-  const student = withoutActor(
+  const studentRecipients = withoutActor(
     [person({ id: decided.studentId, name: decided.studentName })],
     actor
   );
 
   if (decided.status === RefundStatus.Refunded) {
-    if (student.length > 0) {
-      const isTeamPurchase = !!db
-        .select({ id: coupons.id })
-        .from(coupons)
-        .where(eq(coupons.purchaseId, decided.purchaseId))
-        .get();
-      await safe.notify("refunded", student, actor, {
+    if (studentRecipients.length > 0) {
+      await safeNotifier.notify("refunded", studentRecipients, actor, {
         refund_request_id: refundRequestId,
         course_title: decided.courseTitle,
-        is_team_purchase: isTeamPurchase,
+        is_team_purchase: countTeamSeats(decided.purchaseId).total > 0,
         url: "/dashboard",
       });
     }
 
     const instructor = getUser(decided.instructorId);
-    const instructors = instructor
+    const instructorRecipients = instructor
       ? withoutActor([person(instructor)], actor)
       : [];
-    if (instructors.length > 0) {
-      await safe.notify("purchase-refunded", instructors, actor, {
-        refund_request_id: refundRequestId,
-        purchase_id: decided.purchaseId,
-        course_id: decided.courseId,
-        course_title: decided.courseTitle,
-        student_name: decided.studentName,
-        url: `/instructor/${decided.courseId}/students`,
-      });
+    if (instructorRecipients.length > 0) {
+      await safeNotifier.notify(
+        "purchase-refunded",
+        instructorRecipients,
+        actor,
+        {
+          refund_request_id: refundRequestId,
+          purchase_id: decided.purchaseId,
+          course_id: decided.courseId,
+          course_title: decided.courseTitle,
+          student_name: decided.studentName,
+          url: `/instructor/${decided.courseId}/students`,
+        }
+      );
     }
     return;
   }
@@ -561,19 +543,19 @@ export async function notifyRefundDecided(
     return;
   }
 
-  if (student.length > 0) {
+  if (studentRecipients.length > 0) {
     const type =
       decided.status === RefundStatus.Approved
         ? "refund-approved"
         : "refund-declined";
-    await safe.notify(type, student, actor, {
+    await safeNotifier.notify(type, studentRecipients, actor, {
       refund_request_id: refundRequestId,
       course_title: decided.courseTitle,
       url: "/dashboard",
     });
   }
 
-  await safe.markReadWhere(
+  await safeNotifier.markReadWhere(
     "refund-requested",
     listAdmins().map((a) => String(a.id)),
     { refund_request_id: refundRequestId }

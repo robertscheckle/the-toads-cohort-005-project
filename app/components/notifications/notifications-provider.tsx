@@ -6,7 +6,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import type { Feed, FeedItem } from "@knocklabs/client";
+import { NetworkStatus, type Feed, type FeedItem } from "@knocklabs/client";
 import {
   KnockFeedProvider,
   KnockProvider,
@@ -29,8 +29,8 @@ import { archiveNotification } from "~/lib/notification-feed";
 /** A feed item in Cadence's terms. `data` is the trigger data. */
 export type NotificationItem = {
   id: string;
-  /** The workflow key, or null for a type this build doesn't know. */
-  type: NotificationType | null;
+  /** The workflow key. */
+  type: NotificationType;
   /** Actor names, as passed inline when the Notification was triggered. */
   actors: string[];
   totalActors: number;
@@ -49,6 +49,12 @@ export type NotificationsStore = {
   unreadCount: number;
   /** True until the first fetch has finished. */
   loading: boolean;
+  /** Whether Knock has older Notifications than the pages loaded so far. */
+  hasMore: boolean;
+  /** True while the next page is loading. */
+  loadingMore: boolean;
+  /** Loads the next page of older Notifications (PAGE_SIZE at a time). */
+  loadMore: () => Promise<void>;
   refetch: () => Promise<void>;
   markRead: (item: NotificationItem) => Promise<void>;
   markUnread: (item: NotificationItem) => Promise<void>;
@@ -61,7 +67,13 @@ export type NotificationsStore = {
   feedClient: Feed | null;
 };
 
-function toNotificationItem(item: FeedItem): NotificationItem {
+/**
+ * The feed item in Cadence's terms, or null for a workflow this build doesn't
+ * know (e.g. a leftover prototype message): those rows are hidden.
+ */
+function toNotificationItem(item: FeedItem): NotificationItem | null {
+  const type = item.source.key;
+  if (!isNotificationType(type)) return null;
   const actors = item.actors.map((actor) =>
     "name" in actor && typeof actor.name === "string" && actor.name
       ? actor.name
@@ -69,7 +81,7 @@ function toNotificationItem(item: FeedItem): NotificationItem {
   );
   return {
     id: item.id,
-    type: isNotificationType(item.source.key) ? item.source.key : null,
+    type,
     actors,
     totalActors: item.total_actors,
     totalActivities: item.total_activities ?? 1,
@@ -89,10 +101,16 @@ async function logFailure(label: string, run: () => Promise<unknown>) {
   }
 }
 
+/** Notifications per feed page; older ones load with loadMore(). */
+const PAGE_SIZE = 50;
+
 const EMPTY_STORE: NotificationsStore = {
   items: [],
   unreadCount: 0,
   loading: false,
+  hasMore: false,
+  loadingMore: false,
+  loadMore: async () => {},
   refetch: async () => {},
   markRead: async () => {},
   markUnread: async () => {},
@@ -115,6 +133,10 @@ function KnockStore({ children }: { children: React.ReactNode }) {
   const { feedClient, useFeedStore } = useKnockFeed();
   const items = useFeedStore((state) => state.items);
   const unreadCount = useFeedStore((state) => state.metadata.unread_count);
+  const hasMore = useFeedStore((state) => Boolean(state.pageInfo.after));
+  const loadingMore = useFeedStore(
+    (state) => state.networkStatus === NetworkStatus.fetchMore
+  );
 
   // Knock's store reports loading=false before its first fetch has started,
   // which would flash the empty state. Track the first fetch ourselves.
@@ -127,6 +149,10 @@ function KnockStore({ children }: { children: React.ReactNode }) {
   // Stable per feed client, so pages can use them as effect dependencies.
   const refetch = useCallback(
     () => logFailure("refetch", () => feedClient.fetch()),
+    [feedClient]
+  );
+  const loadMore = useCallback(
+    () => logFailure("load more", () => feedClient.fetchNextPage()),
     [feedClient]
   );
   const markRead = useCallback(
@@ -156,9 +182,12 @@ function KnockStore({ children }: { children: React.ReactNode }) {
 
   const store = useMemo<NotificationsStore>(
     () => ({
-      items: items.map(toNotificationItem),
+      items: items.flatMap((item) => toNotificationItem(item) ?? []),
       unreadCount,
       loading: !fetched,
+      hasMore,
+      loadingMore,
+      loadMore,
       refetch,
       markRead,
       markUnread,
@@ -171,6 +200,9 @@ function KnockStore({ children }: { children: React.ReactNode }) {
       items,
       unreadCount,
       fetched,
+      hasMore,
+      loadingMore,
+      loadMore,
       refetch,
       markRead,
       markUnread,
@@ -217,7 +249,7 @@ export function NotificationsProvider({
         defaultFeedOptions={{
           mode: "rich",
           archived: "include",
-          page_size: 50,
+          page_size: PAGE_SIZE,
         }}
       >
         <KnockStore>{children}</KnockStore>

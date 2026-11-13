@@ -1,17 +1,23 @@
 import { ShoppingCart } from "lucide-react";
-import { Bold, actorsPhrase, dataText } from "../row-definition";
+import {
+  Bold,
+  actorsPhrase,
+  dataText,
+  withLatestActorFirst,
+} from "../row-definition";
 import type { NotificationRowDefinition } from "../row-definition";
 
 export const coursePurchasedRow: NotificationRowDefinition = {
   icon: ShoppingCart,
   tone: "text-emerald-600",
   Sentence: ({ item }) => {
+    const actors = actorsPhrase(withLatestActorFirst(item, "buyer_name"));
     const course = <Bold>{dataText(item, "course_title")}</Bold>;
     if (item.totalActivities > 1) {
       return (
         <>
-          <Bold>{actorsPhrase(item)}</Bold> made {item.totalActivities}{" "}
-          Purchases of {course}
+          <Bold>{actors}</Bold> made {item.totalActivities} Purchases of{" "}
+          {course}
         </>
       );
     }
@@ -19,14 +25,14 @@ export const coursePurchasedRow: NotificationRowDefinition = {
     if (seats > 0) {
       return (
         <>
-          <Bold>{actorsPhrase(item)}</Bold> bought {seats}{" "}
+          <Bold>{actors}</Bold> bought {seats}{" "}
           {seats === 1 ? "Team Seat" : "Team Seats"} in {course}
         </>
       );
     }
     return (
       <>
-        <Bold>{actorsPhrase(item)}</Bold> bought {course}
+        <Bold>{actors}</Bold> bought {course}
       </>
     );
   },

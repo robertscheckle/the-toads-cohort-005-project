@@ -1,5 +1,10 @@
 import { Star } from "lucide-react";
-import { Bold, actorsPhrase, dataText } from "../row-definition";
+import {
+  Bold,
+  actorsPhrase,
+  dataText,
+  withLatestActorFirst,
+} from "../row-definition";
 import type { NotificationRowDefinition } from "../row-definition";
 
 // One rating: "Liam rated Course 4 stars". Grouped (several ratings in the
@@ -9,19 +14,19 @@ export const courseRatedRow: NotificationRowDefinition = {
   icon: Star,
   tone: "text-yellow-500",
   Sentence: ({ item }) => {
+    const actors = actorsPhrase(withLatestActorFirst(item, "student_name"));
     const course = <Bold>{dataText(item, "course_title")}</Bold>;
     if (item.totalActivities > 1) {
       return (
         <>
-          <Bold>{actorsPhrase(item)}</Bold> left {item.totalActivities} ratings
-          on {course}
+          <Bold>{actors}</Bold> left {item.totalActivities} ratings on {course}
         </>
       );
     }
     const stars = Number(item.data.rating);
     return (
       <>
-        <Bold>{actorsPhrase(item)}</Bold> rated {course} {stars}{" "}
+        <Bold>{actors}</Bold> rated {course} {stars}{" "}
         {stars === 1 ? "star" : "stars"}
       </>
     );

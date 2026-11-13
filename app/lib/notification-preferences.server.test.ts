@@ -78,14 +78,8 @@ describe("setNotificationTypeEnabled", () => {
   it("mutes a type for the person", async () => {
     const notifier = recordingNotifier();
 
-    const result = await setNotificationTypeEnabled(
-      "8",
-      "comment-replied",
-      false,
-      notifier
-    );
+    await setNotificationTypeEnabled("8", "comment-replied", false, notifier);
 
-    expect(result).toEqual({ ok: true });
     expect(notifier.calls).toEqual([
       {
         operation: "setPreference",
@@ -101,20 +95,23 @@ describe("setNotificationTypeEnabled", () => {
     "refund-approved",
     "refund-declined",
     "refunded",
-  ])("never writes a preference for the Mandatory type %s", async (type) => {
-    const notifier = recordingNotifier();
+  ])(
+    "refuses with a 400 and writes nothing for the Mandatory type %s",
+    async (type) => {
+      const notifier = recordingNotifier();
 
-    const result = await setNotificationTypeEnabled(
-      "8",
-      type as NotificationType,
-      false,
-      notifier
-    );
-
-    expect(result).toEqual({
-      ok: false,
-      message: "Refund Notifications can't be muted",
-    });
-    expect(notifier.calls).toEqual([]);
-  });
+      await expect(
+        setNotificationTypeEnabled(
+          "8",
+          type as NotificationType,
+          false,
+          notifier
+        )
+      ).rejects.toMatchObject({
+        data: "Refund Notifications can't be muted",
+        init: { status: 400 },
+      });
+      expect(notifier.calls).toEqual([]);
+    }
+  );
 });

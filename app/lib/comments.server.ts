@@ -20,13 +20,14 @@ export function assertValidCommentBody(body: string) {
   return trimmed;
 }
 
-function getCommentById(commentId: number) {
+export function getCommentById(commentId: number) {
   return db.select().from(comments).where(eq(comments.id, commentId)).get();
 }
 
-function getCourseForLesson(lessonId: number) {
+/** The Course a Lesson belongs to: its id and Instructor. */
+export function getCourseForLesson(lessonId: number) {
   return db
-    .select({ courseId: courses.id })
+    .select({ courseId: courses.id, instructorId: courses.instructorId })
     .from(lessons)
     .innerJoin(modules, eq(lessons.moduleId, modules.id))
     .innerJoin(courses, eq(modules.courseId, courses.id))

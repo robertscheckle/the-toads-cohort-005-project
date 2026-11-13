@@ -1,4 +1,3 @@
-import { Bell } from "lucide-react";
 import type { NotificationType } from "~/lib/notifications";
 import type { NotificationRowDefinition } from "./row-definition";
 import { courseRatedRow } from "./types/course-rated";
@@ -13,8 +12,9 @@ import { refundedRow } from "./types/refunded";
 import { purchaseRefundedRow } from "./types/purchase-refunded";
 
 // Add a type: create ./types/<workflow-key>.tsx exporting a
-// NotificationRowDefinition, then register it here.
-const ROWS: Partial<Record<NotificationType, NotificationRowDefinition>> = {
+// NotificationRowDefinition, then register it here. A type Knock sends that
+// isn't in the catalog never gets a row (see toNotificationItem).
+const ROWS: Record<NotificationType, NotificationRowDefinition> = {
   "refund-requested": refundRequestedRow,
   "course-rated": courseRatedRow,
   "team-seat-claimed": teamSeatClaimedRow,
@@ -27,16 +27,8 @@ const ROWS: Partial<Record<NotificationType, NotificationRowDefinition>> = {
   "purchase-refunded": purchaseRefundedRow,
 };
 
-/** For a type this build has no row for yet: a plain row that opens the list. */
-const FALLBACK_ROW: NotificationRowDefinition = {
-  icon: Bell,
-  tone: "text-sky-600",
-  Sentence: () => "You have a new Notification",
-  href: () => "/notifications",
-};
-
 export function rowDefinitionFor(
-  type: NotificationType | null
+  type: NotificationType
 ): NotificationRowDefinition {
-  return (type && ROWS[type]) || FALLBACK_ROW;
+  return ROWS[type];
 }

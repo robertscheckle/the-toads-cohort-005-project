@@ -10,8 +10,6 @@ import type { NotificationData, NotificationType } from "~/lib/notifications";
 // Unlike sendEmail, a Notifier never throws. Wrap any implementation in
 // neverThrow() (defaultNotifier() already is): failures are logged with the
 // type and recipients, then swallowed, so Notifications never block real work.
-//
-// Uses positional parameters (project convention).
 
 /** A recipient or actor. `id` is the Cadence user id as a string. */
 export type NotificationPerson = { id: string; name: string };
@@ -50,12 +48,17 @@ export interface Notifier {
     filter: NotificationData
   ): Promise<void>;
   /**
-   * Lists one person's unread Notifications of `type`, each with the trigger
-   * data of every event in it (more than one for a Grouped Notification).
+   * Lists one person's unread Notifications of `type` whose trigger data
+   * matches `filter` (every key equal), each with the trigger data of every
+   * event in it (more than one for a Grouped Notification). Like
+   * markReadWhere, `filter` is matched against the Notification's own data,
+   * which for a Grouped one is its latest event's: filter on the key it is
+   * grouped by.
    */
   listUnread(
     type: NotificationType,
-    recipientId: string
+    recipientId: string,
+    filter: NotificationData
   ): Promise<UnreadNotification[]>;
   /** Marks the given Notifications read, in one batch. */
   markRead(notificationIds: string[]): Promise<void>;
@@ -77,6 +80,24 @@ export function knockNotifier(
 ): Notifier {
   const knock = new Knock({ apiKey: secretKey });
 
+  /** Ids of one person's unread messages of `type` matching `filter`. */
+  async function listUnreadIds(
+    type: NotificationType,
+    recipientId: string,
+    filter: NotificationData
+  ): Promise<string[]> {
+    const messageIds: string[] = [];
+    for await (const message of knock.users.listMessages(recipientId, {
+      source: type,
+      trigger_data: JSON.stringify(filter),
+      engagement_status: ["unread"],
+      ...(feedChannelId ? { channel_id: feedChannelId } : {}),
+    })) {
+      messageIds.push(message.id);
+    }
+    return messageIds;
+  }
+
   return {
     async notify(type, recipients, actor, data) {
       if (recipients.length === 0) return;
@@ -84,31 +105,20 @@ export function knockNotifier(
     },
 
     async markReadWhere(type, recipientIds, filter) {
-      const messageIds: string[] = [];
-      for (const recipientId of recipientIds) {
-        for await (const message of knock.users.listMessages(recipientId, {
-          source: type,
-          trigger_data: JSON.stringify(filter),
-          engagement_status: ["unread"],
-          ...(feedChannelId ? { channel_id: feedChannelId } : {}),
-        })) {
-          messageIds.push(message.id);
-        }
-      }
+      const messageIds = (
+        await Promise.all(
+          recipientIds.map((recipientId) =>
+            listUnreadIds(type, recipientId, filter)
+          )
+        )
+      ).flat();
       if (messageIds.length > 0) {
         await knock.messages.batch.markAsRead({ message_ids: messageIds });
       }
     },
 
-    async listUnread(type, recipientId) {
-      const messageIds: string[] = [];
-      for await (const message of knock.users.listMessages(recipientId, {
-        source: type,
-        engagement_status: ["unread"],
-        ...(feedChannelId ? { channel_id: feedChannelId } : {}),
-      })) {
-        messageIds.push(message.id);
-      }
+    async listUnread(type, recipientId, filter) {
+      const messageIds = await listUnreadIds(type, recipientId, filter);
       // A Grouped message's own data is only its latest event's, so read
       // every event from its activities.
       return Promise.all(
@@ -218,7 +228,8 @@ export type RecordedNotification = UnreadNotification & {
  * Records every write in `calls` and keeps an in-memory feed in `messages`:
  * notify adds one unread Notification per recipient, the mark-read operations
  * mark them read. `preferences` seeds what getPreferences returns (and is
- * updated by setPreference).
+ * updated by setPreference). `eventReads` lists the id of each Notification
+ * whose events listUnread read (with Knock, one activities request each).
  *
  * `groupBy` models a Knock batch per type: an event whose trigger data has
  * the same value for that key as an unread Notification
@@ -227,12 +238,31 @@ export type RecordedNotification = UnreadNotification & {
 export function recordingNotifier(
   preferences: Record<string, NotificationPreferences> = {},
   options: { groupBy?: Partial<Record<NotificationType, string>> } = {}
-): Notifier & { calls: NotifierCall[]; messages: RecordedNotification[] } {
+): Notifier & {
+  calls: NotifierCall[];
+  messages: RecordedNotification[];
+  eventReads: string[];
+} {
   const calls: NotifierCall[] = [];
   const messages: RecordedNotification[] = [];
+  const eventReads: string[] = [];
+  /** Like Knock, `filter` matches the message's data: its latest event's. */
+  function isUnreadMatch(
+    message: RecordedNotification,
+    type: NotificationType,
+    filter: NotificationData
+  ) {
+    const latest = message.events[message.events.length - 1];
+    return (
+      message.type === type &&
+      !message.read &&
+      Object.entries(filter).every(([key, value]) => latest[key] === value)
+    );
+  }
   return {
     calls,
     messages,
+    eventReads,
     async notify(type, recipients, actor, data) {
       calls.push({ operation: "notify", type, recipients, actor, data });
       const groupKey = options.groupBy?.[type];
@@ -261,24 +291,24 @@ export function recordingNotifier(
     },
     async markReadWhere(type, recipientIds, filter) {
       calls.push({ operation: "markReadWhere", type, recipientIds, filter });
-      // Like Knock, matches the message's data: its latest event's.
       for (const message of messages) {
-        const latest = message.events[message.events.length - 1];
         if (
-          message.type === type &&
           recipientIds.includes(message.recipientId) &&
-          Object.entries(filter).every(([key, value]) => latest[key] === value)
+          isUnreadMatch(message, type, filter)
         ) {
           message.read = true;
         }
       }
     },
-    async listUnread(type, recipientId) {
+    async listUnread(type, recipientId, filter) {
       return messages
         .filter(
-          (m) => m.type === type && m.recipientId === recipientId && !m.read
+          (m) => m.recipientId === recipientId && isUnreadMatch(m, type, filter)
         )
-        .map(({ id, events }) => ({ id, type, events: [...events] }));
+        .map(({ id, events }) => {
+          eventReads.push(id);
+          return { id, type, events: [...events] };
+        });
     },
     async markRead(notificationIds) {
       calls.push({ operation: "markRead", notificationIds });
@@ -329,9 +359,11 @@ export function neverThrow(notifier: Notifier): Notifier {
         undefined,
         () => notifier.markReadWhere(type, recipientIds, filter)
       ),
-    listUnread: (type, recipientId) =>
-      attempt(`listUnread ${type} for [${recipientId}]`, [], () =>
-        notifier.listUnread(type, recipientId)
+    listUnread: (type, recipientId, filter) =>
+      attempt(
+        `listUnread ${type} for [${recipientId}] ${JSON.stringify(filter)}`,
+        [],
+        () => notifier.listUnread(type, recipientId, filter)
       ),
     markRead: (notificationIds) =>
       attempt(`markRead [${notificationIds.join(", ")}]`, undefined, () =>

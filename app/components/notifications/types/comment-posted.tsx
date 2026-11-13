@@ -17,6 +17,12 @@ export const commentPostedRow: NotificationRowDefinition = {
       <Bold>{dataText(item, "lesson_title")}</Bold>
     </>
   ),
-  // Opens the Lesson scrolled to the (latest) comment (`#comment-<id>`).
-  href: (item) => dataText(item, "url") || "/notifications",
+  // One comment: the Lesson scrolled to it (`#comment-<id>`). Grouped: the
+  // Lesson's comments section (`#comments`), since it holds several.
+  href: (item) => {
+    const url = dataText(item, "url");
+    if (!url) return "/notifications";
+    if (item.totalActivities <= 1) return url;
+    return `${url.split("#")[0]}#comments`;
+  },
 };

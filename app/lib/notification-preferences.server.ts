@@ -1,3 +1,4 @@
+import { data } from "react-router";
 import { UserRole } from "~/db/schema";
 import {
   isMandatoryNotificationType,
@@ -50,23 +51,19 @@ export async function getNotificationSettings(
   }));
 }
 
-export type SetNotificationTypeResult =
-  { ok: true } | { ok: false; message: string };
-
 /**
- * Mutes (`enabled` false) or unmutes one type for one person. Refuses
- * Mandatory types without writing anything. Affects only future
- * Notifications, never ones already received, never email.
+ * Mutes (`enabled` false) or unmutes one type for one person. Refuses a
+ * Mandatory type by throwing a 400 response, without writing anything.
+ * Affects only future Notifications, never ones already received, never email.
  */
 export async function setNotificationTypeEnabled(
   userId: string,
   type: NotificationType,
   enabled: boolean,
   notifier: Notifier = defaultNotifier()
-): Promise<SetNotificationTypeResult> {
+): Promise<void> {
   if (isMandatoryNotificationType(type)) {
-    return { ok: false, message: MANDATORY_MUTE_MESSAGE };
+    throw data(MANDATORY_MUTE_MESSAGE, { status: 400 });
   }
   await neverThrow(notifier).setPreference(userId, type, enabled);
-  return { ok: true };
 }

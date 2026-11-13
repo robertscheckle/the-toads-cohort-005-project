@@ -1,13 +1,7 @@
 import { data } from "react-router";
 import { eq, and } from "drizzle-orm";
 import { db } from "~/db";
-import {
-  UserRole,
-  users,
-  courses,
-  enrollments,
-  purchases,
-} from "~/db/schema";
+import { UserRole, users, courses, enrollments, purchases } from "~/db/schema";
 import { getCurrentUserId } from "~/lib/session";
 import { resolveCountry } from "~/lib/country.server";
 import { checkPppAccess } from "~/lib/ppp";
@@ -164,12 +158,13 @@ export async function requireContentAccess(
 }
 
 /**
- * Throws unless the user is the course's own instructor, or an admin.
+ * Throws unless the user is the course's own instructor, or an admin. The
+ * returned access always has a signed-in `userId`.
  */
 export async function requireStaff(
   request: Request,
   courseId: number
-): Promise<Access> {
+): Promise<Access & { userId: number }> {
   const access = await getAccess(request, courseId);
 
   if (!access.userId) {
@@ -180,7 +175,7 @@ export async function requireStaff(
     throw data("Only this course's instructor can do that.", { status: 403 });
   }
 
-  return access;
+  return { ...access, userId: access.userId };
 }
 
 /**
