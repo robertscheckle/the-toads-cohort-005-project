@@ -25,6 +25,8 @@ import { desc, eq } from "drizzle-orm";
 import { formatPrice } from "~/lib/utils";
 import { REFUND_STATUS_LABELS } from "~/lib/refunds";
 import { RefundStatusBadge } from "~/components/refund-status-badge";
+import { NotificationSettings } from "~/components/notifications/notification-settings";
+import { getNotificationSettings } from "~/lib/notification-preferences.server";
 
 // One line per status, in the glossary's words.
 const REFUND_STATUS_NOTES: Record<RefundStatus, string> = {
@@ -32,8 +34,7 @@ const REFUND_STATUS_NOTES: Record<RefundStatus, string> = {
   [RefundStatus.Approved]:
     "Approved — your money is on its way. You keep access until it has been sent.",
   [RefundStatus.Declined]: "Declined — nothing will be paid back.",
-  [RefundStatus.Refunded]:
-    "Refunded — your money has been sent.",
+  [RefundStatus.Refunded]: "Refunded — your money has been sent.",
 };
 
 const settingsSchema = z.object({
@@ -94,6 +95,10 @@ export async function loader({ request }: Route.LoaderArgs) {
       role: currentUser.role,
     },
     refundRequests,
+    notificationSettings: await getNotificationSettings(
+      String(currentUser.id),
+      currentUser.role
+    ),
   };
 }
 
@@ -122,8 +127,7 @@ export async function action({ request }: Route.ActionArgs) {
 
   const { name, bio } = parsed.data;
 
-  db
-    .update(users)
+  db.update(users)
     .set({ name, email: currentUser.email, bio: bio || null })
     .where(eq(users.id, currentUser.id))
     .returning()
@@ -132,7 +136,7 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Settings({ loaderData }: Route.ComponentProps) {
-  const { user, refundRequests } = loaderData;
+  const { user, refundRequests, notificationSettings } = loaderData;
   const fetcher = useFetcher();
   const nameInputRef = useRef<HTMLInputElement>(null);
 
@@ -141,7 +145,8 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
       toast.success("Profile updated successfully.");
     }
     if (fetcher.state === "idle" && fetcher.data?.errors) {
-      const firstError = Object.values(fetcher.data.errors)[0] as string | undefined;
+      const firstError = Object.values(fetcher.data.errors)[0] as
+        string | undefined;
       if (firstError) toast.error(firstError);
     }
   }, [fetcher.state, fetcher.data]);
@@ -209,13 +214,23 @@ export default function Settings({ loaderData }: Route.ComponentProps) {
                 </p>
               </div>
             )}
-            <Button
-              type="submit"
-              disabled={fetcher.state !== "idle"}
-            >
+            <Button type="submit" disabled={fetcher.state !== "idle"}>
               {fetcher.state !== "idle" ? "Saving..." : "Save Changes"}
             </Button>
           </fetcher.Form>
+        </CardContent>
+      </Card>
+
+      <Card id="notifications" className="mt-8 max-w-md scroll-mt-6">
+        <CardHeader>
+          <h2 className="text-lg font-semibold">Notifications</h2>
+          <p className="text-sm text-muted-foreground">
+            Mute a Notification type to stop new ones. Notifications you already
+            have stay, and emails are not affected.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <NotificationSettings settings={notificationSettings} />
         </CardContent>
       </Card>
 
@@ -271,12 +286,10 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
           : "Please select a user from the DevUI panel.";
     } else if (error.status === 404) {
       title = "User not found";
-      message =
-        typeof error.data === "string" ? error.data : "User not found.";
+      message = typeof error.data === "string" ? error.data : "User not found.";
     } else {
       title = `Error ${error.status}`;
-      message =
-        typeof error.data === "string" ? error.data : error.statusText;
+      message = typeof error.data === "string" ? error.data : error.statusText;
     }
   }
 
