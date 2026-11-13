@@ -1,0 +1,1 @@
+**{{ data.commenter_name }}**{% if total_actors > 1 %} and {{ total_actors | minus: 1 }} {% if total_actors == 2 %}other{% else %}others{% endif %} commented{% else %} posted a comment{% endif %} on **{{ data.lesson_title }}** in {{ data.course_title }}.

@@ -39,3 +39,19 @@ export function actorsPhrase(item: NotificationItem): string {
   }
   return `${names[0]} and ${total - 1} ${total - 1 === 1 ? "other" : "others"}`;
 }
+
+/**
+ * The item with the latest actor named first. Knock's actor order isn't
+ * latest-first, but a group's `data` is the latest event's, so the trigger
+ * data field holding the actor's name (e.g. "replier_name") names them.
+ */
+export function withLatestActorFirst(
+  item: NotificationItem,
+  nameKey: string
+): NotificationItem {
+  const latest = dataText(item, nameKey);
+  const index = item.actors.indexOf(latest);
+  if (!latest || index <= 0) return item;
+  const actors = [latest, ...item.actors.filter((_, i) => i !== index)];
+  return { ...item, actors };
+}
