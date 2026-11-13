@@ -7,6 +7,10 @@ import { commentRepliedRow } from "./types/comment-replied";
 import { refundRequestedRow } from "./types/refund-requested";
 import { teamSeatClaimedRow } from "./types/team-seat-claimed";
 import { coursePurchasedRow } from "./types/course-purchased";
+import { refundApprovedRow } from "./types/refund-approved";
+import { refundDeclinedRow } from "./types/refund-declined";
+import { refundedRow } from "./types/refunded";
+import { purchaseRefundedRow } from "./types/purchase-refunded";
 
 // Add a type: create ./types/<workflow-key>.tsx exporting a
 // NotificationRowDefinition, then register it here.
@@ -17,6 +21,10 @@ const ROWS: Partial<Record<NotificationType, NotificationRowDefinition>> = {
   "comment-replied": commentRepliedRow,
   "comment-posted": commentPostedRow,
   "course-purchased": coursePurchasedRow,
+  "refund-approved": refundApprovedRow,
+  "refund-declined": refundDeclinedRow,
+  refunded: refundedRow,
+  "purchase-refunded": purchaseRefundedRow,
 };
 
 /** For a type this build has no row for yet: a plain row that opens the list. */
