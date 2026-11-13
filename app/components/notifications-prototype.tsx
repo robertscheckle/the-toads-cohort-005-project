@@ -3,12 +3,15 @@
 // app layout, switchable via `?variant=A|B|C`. Mock data per role, in memory
 // only; no Knock, no database. Never merge to main.
 //
-//   A  Bell in the sidebar header → dropdown feed → "View all" full page
-//   B  "Notifications" sidebar nav item with a count → full page only
+// Notifications are built per user from the real seed data
+// (app/lib/notifications-prototype.server.ts); actions stay in memory.
+//
+//   A  Bell in the sidebar header → dropdown feed → "View all" /notifications
+//   B  "Notifications" sidebar nav item with a count → /notifications only
 //   C  Floating bell top-right of the page → right-hand drawer, "Needs you" pinned
 
-import { createContext, useContext, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { Link, NavLink, useNavigate, useSearchParams } from "react-router";
 import { Dialog, DropdownMenu, Popover } from "radix-ui";
 import { toast } from "sonner";
 import {
@@ -39,9 +42,7 @@ import { Button } from "~/components/ui/button";
 
 // ─── Model ──────────────────────────────────────────────────────────────────
 
-type Role = "student" | "instructor" | "admin";
-
-type NotificationType =
+export type NotificationType =
   | "Refund Requested"
   | "Refund Approved"
   | "Refund Declined"
@@ -60,7 +61,7 @@ const MANDATORY: NotificationType[] = [
   "Refunded",
 ];
 
-interface ProtoNotification {
+export interface ProtoNotification {
   id: string;
   type: NotificationType;
   actors: string[]; // >1 means a Grouped Notification
@@ -165,212 +166,23 @@ function timeAgo(minutes: number) {
   return `${Math.floor(minutes / (60 * 24))}d ago`;
 }
 
-function mock(role: Role): ProtoNotification[] {
-  const base = { read: false, archived: false };
-  if (role === "admin")
-    return [
-      {
-        ...base,
-        id: "a1",
-        type: "Refund Requested",
-        actors: ["Priya Shah"],
-        course: "Intro to TypeScript",
-        href: "/admin/refunds",
-        minutesAgo: 12,
-      },
-      {
-        ...base,
-        id: "a2",
-        type: "Refund Requested",
-        actors: ["Tom Becker"],
-        course: "React Patterns",
-        href: "/admin/refunds",
-        minutesAgo: 190,
-      },
-      {
-        ...base,
-        id: "a3",
-        type: "Refund Requested",
-        actors: ["Lena Ortiz"],
-        course: "SQL for Builders",
-        href: "/admin/refunds",
-        minutesAgo: 60 * 26,
-        read: true, // decided by another Admin → read for everyone
-      },
-      {
-        ...base,
-        id: "a4",
-        type: "Comment Replied",
-        actors: ["Sam Lee"],
-        course: "React Patterns",
-        lesson: "Compound components",
-        href: "/courses/react-patterns/lessons/1",
-        minutesAgo: 60 * 50,
-        read: true,
-      },
-    ];
-  if (role === "instructor")
-    return [
-      {
-        ...base,
-        id: "i1",
-        type: "Comment Posted",
-        actors: ["Ana Silva", "Ben Ito", "Cara Vogt", "Dev Rao"],
-        course: "Intro to TypeScript",
-        lesson: "Narrowing with type guards",
-        href: "/courses/intro-to-typescript/lessons/4",
-        minutesAgo: 4,
-      },
-      {
-        ...base,
-        id: "i2",
-        type: "Course Purchased",
-        actors: ["Mia Novak", "Jon Park"],
-        course: "Intro to TypeScript",
-        href: "/instructor/1/students",
-        minutesAgo: 35,
-      },
-      {
-        ...base,
-        id: "i3",
-        type: "Course Purchased",
-        actors: ["Acme Corp (Lee Wong)"],
-        course: "React Patterns",
-        extra: "10 Team Seats",
-        href: "/instructor/2/students",
-        minutesAgo: 140,
-      },
-      {
-        ...base,
-        id: "i4",
-        type: "Purchase Refunded",
-        actors: ["Priya Shah"],
-        course: "Intro to TypeScript",
-        href: "/instructor/1/students",
-        minutesAgo: 60 * 5,
-      },
-      {
-        ...base,
-        id: "i5",
-        type: "Course Rated",
-        actors: ["Omar Haddad", "Ivy Chen", "Kai Müller"],
-        course: "React Patterns",
-        extra: "★ 4.7 avg",
-        href: "/instructor/2",
-        minutesAgo: 60 * 20,
-        read: true,
-      },
-      {
-        ...base,
-        id: "i6",
-        type: "Comment Replied",
-        actors: ["Ben Ito"],
-        course: "Intro to TypeScript",
-        lesson: "Generics in practice",
-        href: "/courses/intro-to-typescript/lessons/7",
-        minutesAgo: 60 * 30,
-        read: true,
-      },
-    ];
-  return [
-    {
-      ...base,
-      id: "s1",
-      type: "Comment Replied",
-      actors: ["Ana Silva", "Instructor Kim"],
-      course: "Intro to TypeScript",
-      lesson: "Narrowing with type guards",
-      href: "/courses/intro-to-typescript/lessons/4",
-      minutesAgo: 8,
-    },
-    {
-      ...base,
-      id: "s2",
-      type: "Refund Approved",
-      actors: [],
-      course: "SQL for Builders",
-      href: "/dashboard",
-      minutesAgo: 60 * 3,
-    },
-    {
-      ...base,
-      id: "s3",
-      type: "Team Seat Claimed",
-      actors: ["Lee Wong", "Rita Gomez", "Ola Berg"],
-      course: "React Patterns",
-      href: "/team",
-      minutesAgo: 60 * 6,
-    },
-    {
-      ...base,
-      id: "s4",
-      type: "Refund Declined",
-      actors: [],
-      course: "Advanced CSS",
-      href: "/dashboard",
-      minutesAgo: 60 * 48,
-      read: true,
-    },
-    {
-      ...base,
-      id: "s5",
-      type: "Refunded",
-      actors: [],
-      course: "Node Basics",
-      extra: "$49.00",
-      href: "/dashboard",
-      minutesAgo: 60 * 24 * 9,
-      read: true,
-    },
-  ];
-}
-
-const NEW_BY_ROLE: Record<Role, Omit<ProtoNotification, "id">> = {
-  admin: {
-    type: "Refund Requested",
-    actors: ["Noah Kim"],
-    course: "Node Basics",
-    href: "/admin/refunds",
-    minutesAgo: 0,
-    read: false,
-    archived: false,
-  },
-  instructor: {
-    type: "Course Purchased",
-    actors: ["Zoe Adams"],
-    course: "React Patterns",
-    href: "/instructor/2/students",
-    minutesAgo: 0,
-    read: false,
-    archived: false,
-  },
-  student: {
-    type: "Comment Replied",
-    actors: ["Instructor Kim"],
-    course: "React Patterns",
-    lesson: "Render props",
-    href: "/courses/react-patterns/lessons/2",
-    minutesAgo: 0,
-    read: false,
-    archived: false,
-  },
-};
-
 // ─── In-memory store ────────────────────────────────────────────────────────
 
-function useNotificationStore(role: Role) {
-  const [items, setItems] = useState(() => mock(role));
+function useNotificationStore(
+  userId: number | null,
+  initial: ProtoNotification[]
+) {
+  const [items, setItems] = useState(initial);
   const [muted, setMuted] = useState<NotificationType[]>([]);
-  const [lastRole, setLastRole] = useState(role);
-  if (role !== lastRole) {
-    setLastRole(role);
-    setItems(mock(role));
+  const [lastUser, setLastUser] = useState(userId);
+  if (userId !== lastUser) {
+    setLastUser(userId);
+    setItems(initial);
     setMuted([]);
   }
   const patch = (id: string, p: Partial<ProtoNotification>) =>
     setItems((xs) => xs.map((x) => (x.id === id ? { ...x, ...p } : x)));
   return {
-    role,
     items,
     muted,
     unread: items.filter((x) => !x.read && !x.archived).length,
@@ -386,9 +198,23 @@ function useNotificationStore(role: Role) {
       });
     },
     clear: () => setItems([]),
-    reset: () => setItems(mock(role)),
+    reset: () => setItems(initial),
+    // Simulates a live arrival: a fresh copy of this person's newest
+    // non-Refund Notification, from a made-up actor.
     pushNew: () => {
-      const n = { ...NEW_BY_ROLE[role], id: `new-${Date.now()}` };
+      const source = items.find((x) => !MANDATORY.includes(x.type)) ?? items[0];
+      if (!source) {
+        toast("(Nothing in this person's history to simulate from)");
+        return;
+      }
+      const n: ProtoNotification = {
+        ...source,
+        id: `new-${Date.now()}`,
+        actors: ["Simulated Person"],
+        minutesAgo: 0,
+        read: false,
+        archived: false,
+      };
       if (muted.includes(n.type)) {
         toast(`(${n.type} is muted, so nothing arrives)`);
         return;
@@ -613,9 +439,9 @@ function filtered(items: ProtoNotification[], f: Filter) {
   return items.filter((x) => !x.archived);
 }
 
-// ─── Full page (used by A's "View all" and by B) ────────────────────────────
+// ─── Full page at /notifications (A's "View all", and B) ────────────────────────────
 
-function NotificationsPage() {
+export function NotificationsPage() {
   const s = useStore();
   const [filter, setFilter] = useState<Filter>("all");
   const list = filtered(s.items, filter);
@@ -664,7 +490,7 @@ function VariantABell() {
   const s = useStore();
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
-  const [, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const list = filtered(s.items, filter).slice(0, 8);
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
@@ -709,10 +535,7 @@ function VariantABell() {
           <button
             onClick={() => {
               setOpen(false);
-              setParams((p) => {
-                p.set("view", "notifications");
-                return p;
-              });
+              navigate("/notifications");
             }}
             className="block w-full border-t px-3 py-2 text-center text-sm font-medium text-primary hover:bg-accent"
           >
@@ -728,27 +551,22 @@ function VariantABell() {
 
 function VariantBNavItem() {
   const s = useStore();
-  const [params, setParams] = useSearchParams();
-  const active = params.get("view") === "notifications";
   return (
-    <button
-      onClick={() =>
-        setParams((p) => {
-          p.set("view", "notifications");
-          return p;
-        })
+    <NavLink
+      to="/notifications"
+      className={({ isActive }) =>
+        cn(
+          "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+          isActive
+            ? "bg-sidebar-accent text-sidebar-accent-foreground"
+            : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        )
       }
-      className={cn(
-        "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-        active
-          ? "bg-sidebar-accent text-sidebar-accent-foreground"
-          : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-      )}
     >
       <Bell className="size-4" />
       Notifications
       <UnreadBadge count={s.unread} className="ml-auto" />
-    </button>
+    </NavLink>
   );
 }
 
@@ -866,37 +684,43 @@ export const PROTOTYPE_VARIANTS = [
 ];
 
 export function NotificationsPrototypeProvider({
-  role,
+  userId,
+  initial,
   children,
 }: {
-  role: string | null;
+  userId: number | null;
+  initial: ProtoNotification[];
   children: React.ReactNode;
 }) {
-  const store = useNotificationStore((role as Role) ?? "student");
+  const store = useNotificationStore(userId, initial);
   return (
     <StoreContext.Provider value={store}>{children}</StoreContext.Provider>
   );
 }
 
+const VARIANT_KEY = "notifications-prototype-variant";
+
 export function useNotificationsPrototype() {
-  const [params, setParams] = useSearchParams();
-  const variant = params.get("variant") ?? "A";
-  const showPage = variant !== "C" && params.get("view") === "notifications";
+  const [params] = useSearchParams();
+  const fromUrl = params.get("variant");
+  // Links drop ?variant=, so remember the last one instead of rewriting the
+  // URL (rewriting it would lose a #comment-<id> hash).
+  const [saved, setSaved] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      if (fromUrl) localStorage.setItem(VARIANT_KEY, fromUrl);
+      setSaved(fromUrl ?? localStorage.getItem(VARIANT_KEY));
+    } catch {}
+  }, [fromUrl]);
+  const variant = fromUrl ?? saved ?? "A";
   return useMemo(
     () => ({
       variant,
-      showPage,
       sidebarHeaderSlot: variant === "A" ? <VariantABell /> : null,
       sidebarNavSlot: variant === "B" ? <VariantBNavItem /> : null,
       overlay: variant === "C" ? <VariantCDrawer /> : null,
-      page: <NotificationsPage />,
-      closePage: () =>
-        setParams((p) => {
-          p.delete("view");
-          return p;
-        }),
     }),
-    [variant, showPage, setParams]
+    [variant]
   );
 }
 

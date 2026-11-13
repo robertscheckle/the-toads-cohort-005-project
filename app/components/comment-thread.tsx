@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useFetcher } from "react-router";
+import { useFetcher, useLocation } from "react-router";
 import { toast } from "sonner";
 import { MessageSquare, Pencil, Reply, Trash2 } from "lucide-react";
 import { Button } from "~/components/ui/button";
@@ -100,7 +100,11 @@ function CommentForm({
       />
 
       <div className="flex items-center gap-3">
-        <Button type="submit" size="sm" disabled={submitting || empty || tooLong}>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={submitting || empty || tooLong}
+        >
           {submitting ? "Posting..." : submitLabel}
         </Button>
 
@@ -205,8 +209,19 @@ function CommentItem({
 }) {
   const [editing, setEditing] = useState(false);
   const [replying, setReplying] = useState(false);
+  // PROTOTYPE: a Notification links to #comment-<id>; scroll to it and
+  // highlight it (client-side navigation never sets :target).
+  const { hash } = useLocation();
+  const targeted = hash === `#comment-${comment.id}`;
+  useEffect(() => {
+    if (targeted)
+      document
+        .getElementById(`comment-${comment.id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [targeted, comment.id]);
 
-  const isAuthor = currentUserId !== null && comment.author.id === currentUserId;
+  const isAuthor =
+    currentUserId !== null && comment.author.id === currentUserId;
 
   if (comment.deleted) {
     return (
@@ -225,7 +240,16 @@ function CommentItem({
   }
 
   return (
-    <div className={cn("py-3", isReply && "border-l pl-4")}>
+    <div
+      // PROTOTYPE: anchor so a Notification can link to one comment
+      id={`comment-${comment.id}`}
+      className={cn(
+        "py-3",
+        isReply && "border-l pl-4",
+        targeted &&
+          "rounded-md bg-sky-50 px-3 ring-2 ring-sky-300 dark:bg-sky-950/40 dark:ring-sky-800"
+      )}
+    >
       <div className="flex items-start gap-3">
         <UserAvatar
           name={comment.author.name}

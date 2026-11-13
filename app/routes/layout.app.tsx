@@ -10,6 +10,7 @@ import {
   useNotificationsPrototype,
 } from "~/components/notifications-prototype";
 import { PrototypeSwitcher } from "~/components/prototype-switcher";
+import { buildPrototypeNotifications } from "~/lib/notifications-prototype.server";
 import { getCurrentUserId, getDevCountry } from "~/lib/session";
 import { getCountryTierInfo, COUNTRIES } from "~/lib/ppp";
 import { eq, and, or, sql, desc } from "drizzle-orm";
@@ -224,6 +225,10 @@ export async function loader({ request }: Route.LoaderArgs) {
     countryTierInfo,
     countries: COUNTRIES,
     isTeamAdmin: currentUserId ? isTeamAdmin(currentUserId) : false,
+    // PROTOTYPE: Notifications built from this user's real seed data
+    prototypeNotifications: currentUser
+      ? buildPrototypeNotifications(currentUser.id, currentUser.role)
+      : [],
   };
 }
 
@@ -236,11 +241,15 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
     countryTierInfo,
     countries,
     isTeamAdmin: userIsTeamAdmin,
+    prototypeNotifications,
   } = loaderData;
   const proto = useNotificationsPrototype();
 
   return (
-    <NotificationsPrototypeProvider role={currentUser?.role ?? null}>
+    <NotificationsPrototypeProvider
+      userId={currentUser?.id ?? null}
+      initial={prototypeNotifications}
+    >
       <div className="flex h-screen overflow-hidden">
         <Sidebar
           currentUser={currentUser}
@@ -250,10 +259,13 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
           navSlot={currentUser ? proto.sidebarNavSlot : null}
         />
         <main className="relative flex-1 overflow-y-auto">
-          {proto.showPage && currentUser ? proto.page : <Outlet />}
+          <Outlet />
           {currentUser && proto.overlay}
         </main>
-        <PrototypeSwitcher variants={PROTOTYPE_VARIANTS}>
+        <PrototypeSwitcher
+          variants={PROTOTYPE_VARIANTS}
+          current={proto.variant}
+        >
           <PrototypeControls />
         </PrototypeSwitcher>
         <DevUI

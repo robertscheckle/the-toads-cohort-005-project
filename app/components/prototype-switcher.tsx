@@ -6,13 +6,14 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 
 export function PrototypeSwitcher({
   variants,
+  current,
   children,
 }: {
   variants: { key: string; name: string }[];
+  current: string;
   children?: React.ReactNode;
 }) {
-  const [params, setParams] = useSearchParams();
-  const current = params.get("variant") ?? variants[0].key;
+  const [, setParams] = useSearchParams();
   const index = Math.max(
     0,
     variants.findIndex((v) => v.key === current)
