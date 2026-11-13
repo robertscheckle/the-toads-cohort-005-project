@@ -26,8 +26,12 @@ vi.mock("~/db", () => ({
   },
 }));
 
-import { notifyRefundRequested } from "./notification-events.server";
-import { notifyCoursePurchased } from "./notification-events.server";
+import {
+  notifyCoursePurchased,
+  notifyRefundDecided,
+  notifyRefundRequested,
+} from "./notification-events.server";
+import { applyRefundDecision } from "./refunds.server";
 
 function addUser(name: string, role: UserRole) {
   return testDb
@@ -248,5 +252,188 @@ describe("notifyCoursePurchased", () => {
     await notifyCoursePurchased(team.id, notifier);
 
     expect(notifier.calls).toEqual([]);
+  });
+});
+
+describe("notifyRefundDecided", () => {
+  it("approve: tells the Student and marks the Refund Requested Notification read for every Admin", async () => {
+    const refund = requestRefund(f.liam.id, f.course.id);
+    applyRefundDecision(refund.id, "approve", f.ada.id);
+    const notifier = recordingNotifier();
+
+    await notifyRefundDecided(refund.id, notifier);
+
+    expect(notifier.calls).toEqual([
+      {
+        operation: "notify",
+        type: "refund-approved",
+        recipients: [{ id: String(f.liam.id), name: "Liam" }],
+        actor: { id: String(f.ada.id), name: "Ada" },
+        data: {
+          refund_request_id: refund.id,
+          course_title: "Introduction to TypeScript",
+          url: "/dashboard",
+        },
+      },
+      {
+        operation: "markReadWhere",
+        type: "refund-requested",
+        recipientIds: [String(f.ada.id), String(f.alan.id)],
+        filter: { refund_request_id: refund.id },
+      },
+    ]);
+  });
+
+  it("decline: tells the Student and marks the Refund Requested Notification read for every Admin", async () => {
+    const refund = requestRefund(f.liam.id, f.course.id);
+    applyRefundDecision(refund.id, "decline", f.alan.id);
+    const notifier = recordingNotifier();
+
+    await notifyRefundDecided(refund.id, notifier);
+
+    expect(notifier.calls).toEqual([
+      {
+        operation: "notify",
+        type: "refund-declined",
+        recipients: [{ id: String(f.liam.id), name: "Liam" }],
+        actor: { id: String(f.alan.id), name: "Alan" },
+        data: {
+          refund_request_id: refund.id,
+          course_title: "Introduction to TypeScript",
+          url: "/dashboard",
+        },
+      },
+      {
+        operation: "markReadWhere",
+        type: "refund-requested",
+        recipientIds: [String(f.ada.id), String(f.alan.id)],
+        filter: { refund_request_id: refund.id },
+      },
+    ]);
+  });
+
+  it("refunded: tells the Student their access ended and the Instructor who was Refunded", async () => {
+    const refund = requestRefund(f.liam.id, f.course.id);
+    applyRefundDecision(refund.id, "approve", f.ada.id);
+    applyRefundDecision(refund.id, "mark_refunded", f.ada.id);
+    const notifier = recordingNotifier();
+
+    await notifyRefundDecided(refund.id, notifier);
+
+    expect(notifier.calls).toEqual([
+      {
+        operation: "notify",
+        type: "refunded",
+        recipients: [{ id: String(f.liam.id), name: "Liam" }],
+        actor: { id: String(f.ada.id), name: "Ada" },
+        data: {
+          refund_request_id: refund.id,
+          course_title: "Introduction to TypeScript",
+          is_team_purchase: false,
+          url: "/dashboard",
+        },
+      },
+      {
+        operation: "notify",
+        type: "purchase-refunded",
+        recipients: [{ id: String(f.ivy.id), name: "Ivy" }],
+        actor: { id: String(f.ada.id), name: "Ada" },
+        data: {
+          refund_request_id: refund.id,
+          purchase_id: refund.purchaseId,
+          course_id: f.course.id,
+          course_title: "Introduction to TypeScript",
+          student_name: "Liam",
+          url: `/instructor/${f.course.id}/students`,
+        },
+      },
+    ]);
+  });
+
+  it("refunded on a team Purchase: tells the Student it was a team Purchase", async () => {
+    const refund = requestRefund(f.liam.id, f.course.id);
+    const team = testDb.insert(teams).values({}).returning().get();
+    testDb
+      .insert(coupons)
+      .values({
+        teamId: team.id,
+        courseId: f.course.id,
+        code: "SEAT-1",
+        purchaseId: refund.purchaseId,
+      })
+      .run();
+    applyRefundDecision(refund.id, "approve", f.ada.id);
+    applyRefundDecision(refund.id, "mark_refunded", f.ada.id);
+    const notifier = recordingNotifier();
+
+    await notifyRefundDecided(refund.id, notifier);
+
+    expect(notifier.calls[0]).toEqual({
+      operation: "notify",
+      type: "refunded",
+      recipients: [{ id: String(f.liam.id), name: "Liam" }],
+      actor: { id: String(f.ada.id), name: "Ada" },
+      data: {
+        refund_request_id: refund.id,
+        course_title: "Introduction to TypeScript",
+        is_team_purchase: true,
+        url: "/dashboard",
+      },
+    });
+  });
+
+  it("sends the Student nothing when an Admin decides their own Refund Request, but still marks it read", async () => {
+    const refund = requestRefund(f.ada.id, f.course.id);
+    applyRefundDecision(refund.id, "decline", f.ada.id);
+    const notifier = recordingNotifier();
+
+    await notifyRefundDecided(refund.id, notifier);
+
+    expect(notifier.calls).toEqual([
+      {
+        operation: "markReadWhere",
+        type: "refund-requested",
+        recipientIds: [String(f.ada.id), String(f.alan.id)],
+        filter: { refund_request_id: refund.id },
+      },
+    ]);
+  });
+
+  it("sends nothing for a Refund Request nobody has decided", async () => {
+    const refund = requestRefund(f.liam.id, f.course.id);
+    const notifier = recordingNotifier();
+
+    await notifyRefundDecided(refund.id, notifier);
+
+    expect(notifier.calls).toEqual([]);
+  });
+
+  it("doesn't throw when the trigger or the mark read fails, and logs both", async () => {
+    const refund = requestRefund(f.liam.id, f.course.id);
+    applyRefundDecision(refund.id, "approve", f.ada.id);
+    const failing = recordingNotifier();
+    failing.notify = async () => {
+      throw new Error("Knock is down");
+    };
+    failing.markReadWhere = async () => {
+      throw new Error("Knock is down");
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      notifyRefundDecided(refund.id, failing)
+    ).resolves.toBeUndefined();
+
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(`notify refund-approved to [${f.liam.id}]`),
+      expect.any(Error)
+    );
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(
+        `markReadWhere refund-requested for [${f.ada.id}, ${f.alan.id}]`
+      ),
+      expect.any(Error)
+    );
+    log.mockRestore();
   });
 });

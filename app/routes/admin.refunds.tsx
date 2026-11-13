@@ -19,6 +19,7 @@ import {
   type RefundReviewRow,
 } from "~/lib/refunds.server";
 import { sendEmail } from "~/lib/mailer.server";
+import { notifyRefundDecided } from "~/lib/notification-events.server";
 import { formatPrice } from "~/lib/utils";
 import { RefundStatusBadge } from "~/components/refund-status-badge";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
@@ -83,6 +84,7 @@ export async function action({ request }: Route.ActionArgs) {
   }
 
   await sendEmail(result.email);
+  await notifyRefundDecided(parsed.data.refundId);
 
   return { success: true, status: result.status };
 }
