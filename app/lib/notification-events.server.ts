@@ -1,4 +1,13 @@
-import { and, asc, count, eq, isNotNull, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  type SQL,
+} from "drizzle-orm";
 import { db } from "~/db";
 import {
   comments,
@@ -19,6 +28,7 @@ import {
   neverThrow,
   type NotificationPerson,
   type Notifier,
+  type UnreadNotification,
 } from "~/lib/notifier.server";
 
 // ─── Notification events ───
@@ -297,8 +307,60 @@ export async function notifyCommentCreated(
   }
 
   await notifyCommentReplied(context, context.parentId, safeNotifier);
-  // "Answering marks it read" (#31) goes here: the replier
-  // (context.authorId) answered top-level comment context.parentId.
+  await markAnsweredRead(context.authorId, context.parentId, safeNotifier);
+}
+
+/**
+ * "Answering marks it read": `replierId` just replied to top-level comment
+ * `topLevelId`, so their own unread Comment Replied / Comment Posted
+ * Notifications about it are marked read, in one batch. A Grouped one (Comment
+ * Posted groups per Lesson) is marked read only once the replier has replied
+ * to every comment in it. Only the recipient's own replies count.
+ */
+async function markAnsweredRead(
+  replierId: number,
+  topLevelId: number,
+  notifier: Notifier
+): Promise<void> {
+  const unread = (
+    await Promise.all(
+      (["comment-replied", "comment-posted"] as const).map((type) =>
+        notifier.listUnread(type, String(replierId))
+      )
+    )
+  ).flat();
+  const commentIdsOf = (notification: UnreadNotification) =>
+    notification.events.map((event) => Number(event.comment_id));
+  const touched = unread.filter((notification) =>
+    commentIdsOf(notification).includes(topLevelId)
+  );
+  if (touched.length === 0) return;
+
+  const answeredIds = commentsRepliedToBy(
+    replierId,
+    touched.flatMap(commentIdsOf)
+  );
+  const fullyAnswered = touched.filter((notification) =>
+    commentIdsOf(notification).every((id) => answeredIds.has(id))
+  );
+  if (fullyAnswered.length === 0) return;
+  await notifier.markRead(fullyAnswered.map((notification) => notification.id));
+}
+
+/** Which of `commentIds` have a (not deleted) reply by `userId`. */
+function commentsRepliedToBy(userId: number, commentIds: number[]) {
+  const rows = db
+    .selectDistinct({ parentId: comments.parentId })
+    .from(comments)
+    .where(
+      and(
+        eq(comments.userId, userId),
+        inArray(comments.parentId, [...new Set(commentIds)]),
+        isNull(comments.deletedAt)
+      )
+    )
+    .all();
+  return new Set(rows.map((row) => row.parentId));
 }
 
 // ─── Course Purchased ───
