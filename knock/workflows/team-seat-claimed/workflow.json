@@ -1,0 +1,41 @@
+{
+  "name": "Team Seat Claimed",
+  "steps": [
+    {
+      "type": "batch",
+      "ref": "grouping-batch",
+      "settings": {
+        "batch_order": "asc",
+        "batch_window_type": "sliding",
+        "batch_key": "data.purchase_id",
+        "batch_window": {
+          "unit": "hours",
+          "value": 1
+        },
+        "batch_window_extension_limit": {
+          "unit": "hours",
+          "value": 24
+        },
+        "batch_execution_mode": "flush_leading",
+        "workflow_version_mode": "latest"
+      }
+    },
+    {
+      "type": "channel",
+      "template": {
+        "action_url": "{{ data.url }}",
+        "markdown_body@": "in_app_feed_1/markdown_body.md"
+      },
+      "ref": "in_app_feed_1",
+      "channel_type": "in_app_feed",
+      "channel_key": "cadence-in-app"
+    }
+  ],
+  "trigger_frequency": "every_trigger",
+  "__readonly": {
+    "key": "team-seat-claimed",
+    "active": true,
+    "valid": true
+  },
+  "$schema": "https://schemas.knock.app/cli/workflow.json"
+}
