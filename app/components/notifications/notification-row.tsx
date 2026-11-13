@@ -1,15 +1,21 @@
 import { Link } from "react-router";
+import { Archive } from "lucide-react";
 import { cn, formatRelativeTime } from "~/lib/utils";
 import { NOTIFICATION_TYPE_LABELS } from "~/lib/notifications";
 import {
   useNotifications,
   type NotificationItem,
 } from "./notifications-provider";
+import { NotificationRowMenu } from "./notification-row-menu";
 import { rowDefinitionFor } from "./registry";
 
-/** One Notification: type icon, sentence, meta line. Clicking marks it read and opens it. */
+/**
+ * One Notification: type icon, sentence, meta line, and (on hover) Archive
+ * and the ⋮ menu. Clicking the sentence marks it read and opens it. What a
+ * type looks like comes from its row definition in ./registry.ts.
+ */
 export function NotificationRow({ item }: { item: NotificationItem }) {
-  const { markRead } = useNotifications();
+  const { markRead, archive } = useNotifications();
   const { icon: Icon, tone, Sentence, href } = rowDefinitionFor(item.type);
   const unread = !item.read;
   const meta = [
@@ -21,20 +27,16 @@ export function NotificationRow({ item }: { item: NotificationItem }) {
     .join(" · ");
 
   return (
-    <Link
-      to={href(item)}
-      onClick={() => {
-        if (unread) void markRead(item);
-      }}
+    <div
       className={cn(
-        "relative flex items-start gap-3 border-b px-4 py-3.5 transition-colors last:border-b-0 hover:bg-accent/60",
+        "group relative flex items-start gap-3 border-b px-4 py-3.5 transition-colors last:border-b-0 hover:bg-accent/60",
         unread && "bg-sky-50/70 dark:bg-sky-950/30"
       )}
     >
       {unread && <span className="absolute inset-y-0 left-0 w-1 bg-sky-600" />}
       <span
         className={cn(
-          "flex size-9 shrink-0 items-center justify-center rounded-full",
+          "mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full",
           unread
             ? "bg-sky-100 dark:bg-sky-900"
             : "bg-muted opacity-50 grayscale"
@@ -42,7 +44,13 @@ export function NotificationRow({ item }: { item: NotificationItem }) {
       >
         <Icon className={cn("size-4", tone)} />
       </span>
-      <span className="min-w-0 flex-1">
+      <Link
+        to={href(item)}
+        onClick={() => {
+          if (unread) void markRead(item);
+        }}
+        className="min-w-0 flex-1"
+      >
         <span
           className={cn(
             "block text-sm",
@@ -61,10 +69,22 @@ export function NotificationRow({ item }: { item: NotificationItem }) {
           )}
           {meta}
         </span>
-      </span>
-      {unread && (
-        <span className="mt-1.5 size-2 shrink-0 rounded-full bg-sky-600" />
-      )}
-    </Link>
+      </Link>
+      <div className="flex shrink-0 items-center gap-1">
+        {unread && <span className="size-2 rounded-full bg-sky-600" />}
+        {!item.archived && (
+          <button
+            type="button"
+            onClick={() => void archive(item)}
+            title="Archive"
+            aria-label="Archive"
+            className="rounded p-1 text-muted-foreground opacity-0 hover:bg-accent focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <Archive className="size-4" />
+          </button>
+        )}
+        <NotificationRowMenu item={item} />
+      </div>
+    </div>
   );
 }
