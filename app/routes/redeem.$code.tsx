@@ -15,6 +15,7 @@ import { purchases, coupons, courses, enrollments } from "~/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getTeamSeatBlock } from "~/lib/refunds.server";
 import { TEAM_SEAT_BLOCK_MESSAGES } from "~/lib/refunds";
+import { notifyTeamSeatClaimed } from "~/lib/notification-events.server";
 
 function getCourseById(id: number) {
   return db.select().from(courses).where(eq(courses.id, id)).get();
@@ -37,7 +38,7 @@ function isUserEnrolled(userId: number, courseId: number) {
 }
 
 type RedeemResult =
-  | { ok: true; enrollment: typeof enrollments.$inferSelect }
+  | { ok: true; couponId: number; enrollment: typeof enrollments.$inferSelect }
   | { ok: false; error: string };
 
 function redeemCoupon(
@@ -102,7 +103,7 @@ function redeemCoupon(
     .returning()
     .get();
 
-  return { ok: true, enrollment };
+  return { ok: true, couponId: coupon.id, enrollment };
 }
 
 const redeemParamsSchema = z.object({
@@ -143,7 +144,9 @@ export async function loader({ params, request }: Route.LoaderArgs) {
 
   const alreadyRedeemed = coupon.redeemedByUserId !== null;
   const alreadyEnrolled = isUserEnrolled(currentUserId, coupon.courseId);
-  const seatBlock = alreadyRedeemed ? null : getTeamSeatBlock(coupon.purchaseId);
+  const seatBlock = alreadyRedeemed
+    ? null
+    : getTeamSeatBlock(coupon.purchaseId);
 
   // Check country mismatch upfront so we can show a clear message
   let countryMismatch = false;
@@ -191,6 +194,8 @@ export async function action({ params, request }: Route.ActionArgs) {
     return data({ error: result.error }, { status: 400 });
   }
 
+  await notifyTeamSeatClaimed(result.couponId);
+
   const course = getCourseById(result.enrollment.courseId);
   if (!course) {
     throw redirect("/courses");
@@ -224,7 +229,10 @@ export default function Redeem({
 
   // Determine which state to show
   const canRedeem =
-    !alreadyRedeemed && !alreadyEnrolled && !seatBlockMessage && !countryMismatch;
+    !alreadyRedeemed &&
+    !alreadyEnrolled &&
+    !seatBlockMessage &&
+    !countryMismatch;
 
   return (
     <div className="mx-auto max-w-2xl p-6 lg:p-8">

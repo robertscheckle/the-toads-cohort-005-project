@@ -2,11 +2,13 @@ import { Bell } from "lucide-react";
 import type { NotificationType } from "~/lib/notifications";
 import type { NotificationRowDefinition } from "./row-definition";
 import { refundRequestedRow } from "./types/refund-requested";
+import { teamSeatClaimedRow } from "./types/team-seat-claimed";
 
 // Add a type: create ./types/<workflow-key>.tsx exporting a
 // NotificationRowDefinition, then register it here.
 const ROWS: Partial<Record<NotificationType, NotificationRowDefinition>> = {
   "refund-requested": refundRequestedRow,
+  "team-seat-claimed": teamSeatClaimedRow,
 };
 
 /** For a type this build has no row for yet: a plain row that opens the list. */
