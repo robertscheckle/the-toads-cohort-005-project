@@ -1,0 +1,157 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { eq } from "drizzle-orm";
+import { createTestDb } from "~/test/setup";
+import {
+  categories,
+  courses,
+  enrollments,
+  purchases,
+  refunds,
+  users,
+  CourseStatus,
+  RefundStatus,
+  UserRole,
+} from "~/db/schema";
+import { recordingNotifier } from "./notifier.server";
+
+let testDb: ReturnType<typeof createTestDb>;
+
+vi.mock("~/db", () => ({
+  get db() {
+    return testDb;
+  },
+}));
+
+import { notifyRefundRequested } from "./notification-events.server";
+
+function addUser(name: string, role: UserRole) {
+  return testDb
+    .insert(users)
+    .values({ name, email: `${name.toLowerCase()}@example.com`, role })
+    .returning()
+    .get();
+}
+
+function seed() {
+  const ada = addUser("Ada", UserRole.Admin);
+  const alan = addUser("Alan", UserRole.Admin);
+  const ivy = addUser("Ivy", UserRole.Instructor);
+  const liam = addUser("Liam", UserRole.Student);
+  const category = testDb
+    .insert(categories)
+    .values({ name: "Programming", slug: "programming" })
+    .returning()
+    .get();
+  const course = testDb
+    .insert(courses)
+    .values({
+      title: "Introduction to TypeScript",
+      slug: "intro-ts",
+      description: "Types",
+      salesCopy: "Buy it",
+      instructorId: ivy.id,
+      categoryId: category.id,
+      status: CourseStatus.Published,
+      price: 7900,
+    })
+    .returning()
+    .get();
+  return { ada, alan, ivy, liam, course };
+}
+
+function requestRefund(buyerId: number, courseId: number) {
+  const purchase = testDb
+    .insert(purchases)
+    .values({ userId: buyerId, courseId, amountPaid: 7900 })
+    .returning()
+    .get();
+  testDb.insert(enrollments).values({ userId: buyerId, courseId }).run();
+  return testDb
+    .insert(refunds)
+    .values({
+      purchaseId: purchase.id,
+      status: RefundStatus.Requested,
+      reason: "Not what I expected.",
+    })
+    .returning()
+    .get();
+}
+
+let f: ReturnType<typeof seed>;
+
+beforeEach(() => {
+  testDb = createTestDb();
+  f = seed();
+});
+
+describe("notifyRefundRequested", () => {
+  it("sends one Refund Requested Notification to every Admin, from the Student", async () => {
+    const refund = requestRefund(f.liam.id, f.course.id);
+    const notifier = recordingNotifier();
+
+    await notifyRefundRequested(refund.id, notifier);
+
+    expect(notifier.calls).toEqual([
+      {
+        operation: "notify",
+        type: "refund-requested",
+        recipients: [
+          { id: String(f.ada.id), name: "Ada" },
+          { id: String(f.alan.id), name: "Alan" },
+        ],
+        actor: { id: String(f.liam.id), name: "Liam" },
+        data: {
+          refund_request_id: refund.id,
+          student_name: "Liam",
+          course_title: "Introduction to TypeScript",
+          url: "/admin/refunds",
+        },
+      },
+    ]);
+  });
+
+  it("leaves out an Admin who requests a Refund on their own Purchase", async () => {
+    const refund = requestRefund(f.ada.id, f.course.id);
+    const notifier = recordingNotifier();
+
+    await notifyRefundRequested(refund.id, notifier);
+
+    expect(notifier.calls).toHaveLength(1);
+    expect(notifier.calls[0]).toMatchObject({
+      type: "refund-requested",
+      recipients: [{ id: String(f.alan.id), name: "Alan" }],
+      actor: { id: String(f.ada.id), name: "Ada" },
+    });
+  });
+
+  it("sends nothing when the only Admin requested the Refund", async () => {
+    testDb.delete(users).where(eq(users.id, f.alan.id)).run();
+    const refund = requestRefund(f.ada.id, f.course.id);
+    const notifier = recordingNotifier();
+
+    await notifyRefundRequested(refund.id, notifier);
+
+    expect(notifier.calls).toEqual([]);
+  });
+
+  it("doesn't throw when the Notifier fails, and logs the type and recipients", async () => {
+    const refund = requestRefund(f.liam.id, f.course.id);
+    const failing = recordingNotifier();
+    failing.notify = async () => {
+      throw new Error("Knock is down");
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      notifyRefundRequested(refund.id, failing)
+    ).resolves.toBeUndefined();
+
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(
+        `refund-requested to [${f.ada.id}, ${f.alan.id}]`
+      ),
+      expect.any(Error)
+    );
+    log.mockRestore();
+  });
+});

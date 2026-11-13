@@ -12,6 +12,7 @@ import {
 } from "~/lib/refunds";
 import { getRefundOffer } from "~/lib/refunds.server";
 import { sendEmail } from "~/lib/mailer.server";
+import { notifyRefundRequested } from "~/lib/notification-events.server";
 
 const refundParamsSchema = z.object({
   slug: z.string().min(1),
@@ -71,13 +72,15 @@ export async function action({ params, request }: Route.ActionArgs) {
     return data({ errors: parsed.errors }, { status: 400 });
   }
 
-  db.insert(refunds)
+  const refundRequest = db
+    .insert(refunds)
     .values({
       purchaseId: offer.purchase.id,
       status: RefundStatus.Requested,
       reason: parsed.data.reason,
     })
-    .run();
+    .returning()
+    .get();
 
   const email = buildRefundRequestedEmail({
     studentName: student.name,
@@ -87,6 +90,7 @@ export async function action({ params, request }: Route.ActionArgs) {
   });
 
   await sendEmail(email);
+  await notifyRefundRequested(refundRequest.id);
 
   return redirect("/settings");
 }
