@@ -17,6 +17,7 @@ import {
   type KnockFeedConfig,
   type NotificationType,
 } from "~/lib/notifications";
+import { archiveNotification } from "~/lib/notification-feed";
 
 // ─── Notifications store ───
 // Knock's React hooks (no prebuilt components) behind one small store that the
@@ -50,6 +51,12 @@ export type NotificationsStore = {
   loading: boolean;
   refetch: () => Promise<void>;
   markRead: (item: NotificationItem) => Promise<void>;
+  markUnread: (item: NotificationItem) => Promise<void>;
+  /** Mark archived, then mark read (so it never counts as unread). */
+  archive: (item: NotificationItem) => Promise<void>;
+  /** Move an archived Notification back to the list. */
+  unarchive: (item: NotificationItem) => Promise<void>;
+  markAllRead: () => Promise<void>;
   /** Knock's feed client, for actions the store doesn't wrap yet. */
   feedClient: Feed | null;
 };
@@ -88,6 +95,10 @@ const EMPTY_STORE: NotificationsStore = {
   loading: false,
   refetch: async () => {},
   markRead: async () => {},
+  markUnread: async () => {},
+  archive: async () => {},
+  unarchive: async () => {},
+  markAllRead: async () => {},
   feedClient: null,
 };
 
@@ -123,6 +134,25 @@ function KnockStore({ children }: { children: React.ReactNode }) {
       logFailure("mark read", () => feedClient.markAsRead(item.feedItem)),
     [feedClient]
   );
+  const markUnread = useCallback(
+    (item: NotificationItem) =>
+      logFailure("mark unread", () => feedClient.markAsUnread(item.feedItem)),
+    [feedClient]
+  );
+  const archive = useCallback(
+    (item: NotificationItem) =>
+      logFailure("archive", () => archiveNotification(feedClient, item)),
+    [feedClient]
+  );
+  const unarchive = useCallback(
+    (item: NotificationItem) =>
+      logFailure("unarchive", () => feedClient.markAsUnarchived(item.feedItem)),
+    [feedClient]
+  );
+  const markAllRead = useCallback(
+    () => logFailure("mark all read", () => feedClient.markAllAsRead()),
+    [feedClient]
+  );
 
   const store = useMemo<NotificationsStore>(
     () => ({
@@ -131,9 +161,24 @@ function KnockStore({ children }: { children: React.ReactNode }) {
       loading: !fetched,
       refetch,
       markRead,
+      markUnread,
+      archive,
+      unarchive,
+      markAllRead,
       feedClient,
     }),
-    [items, unreadCount, fetched, refetch, markRead, feedClient]
+    [
+      items,
+      unreadCount,
+      fetched,
+      refetch,
+      markRead,
+      markUnread,
+      archive,
+      unarchive,
+      markAllRead,
+      feedClient,
+    ]
   );
 
   return (
