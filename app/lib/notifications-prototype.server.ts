@@ -34,6 +34,8 @@ interface Event {
   href: string;
   at: number; // ms
   read?: boolean;
+  // The recipient has since answered this comment, so it's dealt with.
+  answered?: boolean;
 }
 
 const MIN = 60_000;
@@ -60,20 +62,19 @@ function group(events: Event[], now: number): ProtoNotification[] {
     const isComment = list[0].type.startsWith("Comment");
     const windowMs = (isComment ? 10 : 60) * MIN;
     const maxMs = (isComment ? 60 : 24 * 60) * MIN;
-    let open: {
-      first: Event;
-      actors: string[];
-      start: number;
-      last: number;
-    } | null = null;
+    let open: { events: Event[]; start: number; last: number } | null = null;
     let lastEmittedAt = -Infinity;
     const flush = () => {
       if (!open) return;
-      push(open.first, open.actors, open.last);
+      push(open.events);
       lastEmittedAt = open.last;
       open = null;
     };
-    const push = (e: Event, actors: string[], at: number) =>
+    const push = (events: Event[]) => {
+      const e = events[0];
+      const at = events[events.length - 1].at;
+      const actors = events.map((x) => x.actor).reverse();
+      const answered = events.every((x) => x.answered);
       out.push({
         id: `${k}:${at}`,
         type: e.type,
@@ -83,23 +84,24 @@ function group(events: Event[], now: number): ProtoNotification[] {
         extra: e.extra,
         href: e.href,
         minutesAgo: Math.max(0, Math.round((now - at) / MIN)),
-        read: e.read ?? now - at > 7 * 24 * 60 * MIN,
+        read: e.read ?? (answered || now - at > 7 * 24 * 60 * MIN),
         archived: false,
       });
+    };
     for (const e of list) {
       if (UNGROUPED.includes(e.type)) {
-        push(e, [e.actor], e.at);
+        push([e]);
         continue;
       }
       if (open && e.at - open.last <= windowMs && e.at - open.start <= maxMs) {
-        open.actors.unshift(e.actor);
+        open.events.push(e);
         open.last = e.at;
       } else {
         flush();
         if (e.at - lastEmittedAt <= windowMs) {
-          open = { first: e, actors: [e.actor], start: e.at, last: e.at };
+          open = { events: [e], start: e.at, last: e.at };
         } else {
-          push(e, [e.actor], e.at);
+          push([e]);
           lastEmittedAt = e.at;
         }
       }
@@ -147,6 +149,21 @@ function commentEvents(userId: number, ownedCourseIds: number[]): Event[] {
       parentAuthor: r.parentId ? authorOf.get(r.parentId) : undefined,
     }));
 
+  // When the recipient replied to each comment (replies are one level deep).
+  const myReplies = db
+    .select({ parentId: comments.parentId, at: comments.createdAt })
+    .from(comments)
+    .where(
+      and(
+        eq(comments.userId, userId),
+        isNotNull(comments.parentId),
+        isNull(comments.deletedAt)
+      )
+    )
+    .all();
+  const answeredAfter = (parentId: number, at: number) =>
+    myReplies.some((m) => m.parentId === parentId && ms(m.at) > at);
+
   const events: Event[] = [];
   for (const r of rows) {
     const base = {
@@ -161,6 +178,7 @@ function commentEvents(userId: number, ownedCourseIds: number[]): Event[] {
         key: `c${r.parentId}`,
         type: "Comment Replied",
         href: `/courses/${r.slug}/lessons/${r.lessonId}#comment-${r.parentId}`,
+        answered: answeredAfter(r.parentId, base.at),
       });
     } else if (!r.parentId && ownedCourseIds.includes(r.courseId)) {
       events.push({
@@ -168,6 +186,7 @@ function commentEvents(userId: number, ownedCourseIds: number[]): Event[] {
         key: `l${r.lessonId}`,
         type: "Comment Posted",
         href: `/courses/${r.slug}/lessons/${r.lessonId}#comment-${r.id}`,
+        answered: answeredAfter(r.id, base.at),
       });
     }
   }

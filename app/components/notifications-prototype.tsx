@@ -175,10 +175,24 @@ function useNotificationStore(
   const [items, setItems] = useState(initial);
   const [muted, setMuted] = useState<NotificationType[]>([]);
   const [lastUser, setLastUser] = useState(userId);
+  const [lastInitial, setLastInitial] = useState(initial);
   if (userId !== lastUser) {
     setLastUser(userId);
+    setLastInitial(initial);
     setItems(initial);
     setMuted([]);
+  } else if (initial !== lastInitial) {
+    // Fresh loader data (e.g. after replying to a comment): take what the
+    // server now says is read or new, keep what was archived or read here.
+    setLastInitial(initial);
+    setItems((prev) =>
+      initial.map((n) => {
+        const old = prev.find((x) => x.id === n.id);
+        return old
+          ? { ...n, read: n.read || old.read, archived: old.archived }
+          : n;
+      })
+    );
   }
   const patch = (id: string, p: Partial<ProtoNotification>) =>
     setItems((xs) => xs.map((x) => (x.id === id ? { ...x, ...p } : x)));
@@ -339,10 +353,14 @@ function Row({
         !n.read && "bg-sky-50/70 dark:bg-sky-950/30"
       )}
     >
+      {!n.read && <span className="absolute inset-y-0 left-0 w-1 bg-sky-600" />}
       <div
         className={cn(
-          "mt-0.5 flex shrink-0 items-center justify-center rounded-full bg-muted",
-          dense ? "size-7" : "size-9"
+          "mt-0.5 flex shrink-0 items-center justify-center rounded-full",
+          dense ? "size-7" : "size-9",
+          n.read
+            ? "bg-muted opacity-50 grayscale"
+            : "bg-sky-100 dark:bg-sky-900"
         )}
       >
         <Icon className={cn(dense ? "size-3.5" : "size-4", tone)} />
@@ -355,10 +373,22 @@ function Row({
         }}
         className="min-w-0 flex-1"
       >
-        <p className={cn("text-sm", n.read && "text-muted-foreground")}>
+        <p
+          className={cn(
+            "text-sm",
+            n.read
+              ? "text-muted-foreground [&_strong]:font-normal"
+              : "text-foreground [&_strong]:font-semibold"
+          )}
+        >
           <NotificationText n={n} />
         </p>
         <p className="mt-0.5 text-xs text-muted-foreground">
+          {!n.read && (
+            <span className="font-semibold text-sky-700 dark:text-sky-400">
+              New ·{" "}
+            </span>
+          )}
           {n.type}
           {n.actors.length > 1 && ` · ${n.actors.length} events`} ·{" "}
           {timeAgo(n.minutesAgo)}
