@@ -18,6 +18,7 @@ import {
 } from "~/db/schema";
 import { eq, and, or, sql } from "drizzle-orm";
 import { getRefundOffer } from "~/lib/refunds.server";
+import { notifyCourseRated } from "~/lib/notification-events.server";
 import { Card, CardContent, CardHeader } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -299,7 +300,10 @@ function findRating(userId: number, courseId: number) {
     .select()
     .from(courseRatings)
     .where(
-      and(eq(courseRatings.userId, userId), eq(courseRatings.courseId, courseId))
+      and(
+        eq(courseRatings.userId, userId),
+        eq(courseRatings.courseId, courseId)
+      )
     )
     .get();
 }
@@ -344,19 +348,21 @@ function rateCourse(userId: number, courseId: number, rating: number) {
   const existing = findRating(userId, courseId);
 
   if (existing) {
-    return db
+    const updated = db
       .update(courseRatings)
       .set({ rating, updatedAt: new Date().toISOString() })
       .where(eq(courseRatings.id, existing.id))
       .returning()
       .get();
+    return { rating: updated, change: "edit" as const };
   }
 
-  return db
+  const created = db
     .insert(courseRatings)
     .values({ userId, courseId, rating })
     .returning()
     .get();
+  return { rating: created, change: "first" as const };
 }
 
 const ratingSchema = z.object({
@@ -485,7 +491,8 @@ export async function action({ params, request }: Route.ActionArgs) {
     return { ok: false as const, error: "Please choose a rating from 1 to 5." };
   }
 
-  rateCourse(currentUserId, course.id, parsed.data.rating);
+  const rated = rateCourse(currentUserId, course.id, parsed.data.rating);
+  await notifyCourseRated(rated.rating.id, rated.change);
 
   return { ok: true as const, error: null };
 }
@@ -920,8 +927,8 @@ function RequestRefund({
     <div className="border-t pt-4">
       <p className="mb-2 text-sm font-medium">{title}</p>
       <p className="mb-3 text-xs text-muted-foreground">
-        If an admin approves your refund, we will send {formatPrice(refundAmount)}{" "}
-        back to the card you paid with.
+        If an admin approves your refund, we will send{" "}
+        {formatPrice(refundAmount)} back to the card you paid with.
         {isTeamPurchase &&
           " While an admin reviews it, your unclaimed Team Seats cannot be claimed, and once it is refunded they are no longer available."}
       </p>

@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { createTestDb } from "~/test/setup";
 import {
   categories,
+  courseRatings,
   courses,
   enrollments,
   purchases,
@@ -22,7 +23,10 @@ vi.mock("~/db", () => ({
   },
 }));
 
-import { notifyRefundRequested } from "./notification-events.server";
+import {
+  notifyCourseRated,
+  notifyRefundRequested,
+} from "./notification-events.server";
 
 function addUser(name: string, role: UserRole) {
   return testDb
@@ -152,6 +156,73 @@ describe("notifyRefundRequested", () => {
       ),
       expect.any(Error)
     );
+    log.mockRestore();
+  });
+});
+
+function rate(userId: number, courseId: number, rating: number) {
+  return testDb
+    .insert(courseRatings)
+    .values({ userId, courseId, rating })
+    .returning()
+    .get();
+}
+
+describe("notifyCourseRated", () => {
+  it("sends a first rating to the Instructor who owns the Course, from the Student", async () => {
+    const rating = rate(f.liam.id, f.course.id, 4);
+    const notifier = recordingNotifier();
+
+    await notifyCourseRated(rating.id, "first", notifier);
+
+    expect(notifier.calls).toEqual([
+      {
+        operation: "notify",
+        type: "course-rated",
+        recipients: [{ id: String(f.ivy.id), name: "Ivy" }],
+        actor: { id: String(f.liam.id), name: "Liam" },
+        data: {
+          course_rating_id: rating.id,
+          course_id: f.course.id,
+          course_title: "Introduction to TypeScript",
+          student_name: "Liam",
+          rating: 4,
+          url: `/instructor/${f.course.id}`,
+        },
+      },
+    ]);
+  });
+
+  it("sends nothing when a Student edits an existing rating", async () => {
+    const rating = rate(f.liam.id, f.course.id, 2);
+    const notifier = recordingNotifier();
+
+    await notifyCourseRated(rating.id, "edit", notifier);
+
+    expect(notifier.calls).toEqual([]);
+  });
+
+  it("sends nothing when the Instructor rates their own Course", async () => {
+    const rating = rate(f.ivy.id, f.course.id, 5);
+    const notifier = recordingNotifier();
+
+    await notifyCourseRated(rating.id, "first", notifier);
+
+    expect(notifier.calls).toEqual([]);
+  });
+
+  it("doesn't throw when the Notifier fails", async () => {
+    const rating = rate(f.liam.id, f.course.id, 3);
+    const failing = recordingNotifier();
+    failing.notify = async () => {
+      throw new Error("Knock is down");
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      notifyCourseRated(rating.id, "first", failing)
+    ).resolves.toBeUndefined();
+
     log.mockRestore();
   });
 });
