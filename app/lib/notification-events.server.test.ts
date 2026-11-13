@@ -3,14 +3,18 @@ import { eq } from "drizzle-orm";
 import { createTestDb } from "~/test/setup";
 import {
   categories,
+  coupons,
   courseRatings,
   courses,
   enrollments,
   purchases,
   refunds,
+  teamMembers,
+  teams,
   users,
   CourseStatus,
   RefundStatus,
+  TeamMemberRole,
   UserRole,
 } from "~/db/schema";
 import { recordingNotifier } from "./notifier.server";
@@ -23,10 +27,9 @@ vi.mock("~/db", () => ({
   },
 }));
 
-import {
-  notifyCourseRated,
-  notifyRefundRequested,
-} from "./notification-events.server";
+import { notifyRefundRequested } from "./notification-events.server";
+import { notifyCoursePurchased } from "./notification-events.server";
+import { notifyCourseRated } from "./notification-events.server";
 
 function addUser(name: string, role: UserRole) {
   return testDb
@@ -157,6 +160,96 @@ describe("notifyRefundRequested", () => {
       expect.any(Error)
     );
     log.mockRestore();
+  });
+});
+
+describe("notifyCoursePurchased", () => {
+  function buy(buyerId: number, courseId: number) {
+    return testDb
+      .insert(purchases)
+      .values({ userId: buyerId, courseId, amountPaid: 7900 })
+      .returning()
+      .get();
+  }
+
+  it("tells the Instructor who owns the Course about a personal Purchase", async () => {
+    const purchase = buy(f.liam.id, f.course.id);
+    const notifier = recordingNotifier();
+
+    await notifyCoursePurchased(purchase.id, notifier);
+
+    expect(notifier.calls).toEqual([
+      {
+        operation: "notify",
+        type: "course-purchased",
+        recipients: [{ id: String(f.ivy.id), name: "Ivy" }],
+        actor: { id: String(f.liam.id), name: "Liam" },
+        data: {
+          purchase_id: purchase.id,
+          course_id: f.course.id,
+          buyer_name: "Liam",
+          course_title: "Introduction to TypeScript",
+          team_seats: 0,
+          url: `/instructor/${f.course.id}/students`,
+        },
+      },
+    ]);
+  });
+
+  function buyTeamSeats(buyerId: number, courseId: number, seats: number) {
+    const purchase = buy(buyerId, courseId);
+    const team = testDb.insert(teams).values({}).returning().get();
+    testDb
+      .insert(teamMembers)
+      .values({ teamId: team.id, userId: buyerId, role: TeamMemberRole.Admin })
+      .run();
+    for (let i = 0; i < seats; i++) {
+      testDb
+        .insert(coupons)
+        .values({
+          teamId: team.id,
+          courseId,
+          code: `seat-${purchase.id}-${i}`,
+          purchaseId: purchase.id,
+        })
+        .run();
+    }
+    return purchase;
+  }
+
+  it("tells the Instructor how many Team Seats a team Purchase bought", async () => {
+    const purchase = buyTeamSeats(f.liam.id, f.course.id, 3);
+    const notifier = recordingNotifier();
+
+    await notifyCoursePurchased(purchase.id, notifier);
+
+    expect(notifier.calls).toEqual([
+      {
+        operation: "notify",
+        type: "course-purchased",
+        recipients: [{ id: String(f.ivy.id), name: "Ivy" }],
+        actor: { id: String(f.liam.id), name: "Liam" },
+        data: {
+          purchase_id: purchase.id,
+          course_id: f.course.id,
+          buyer_name: "Liam",
+          course_title: "Introduction to TypeScript",
+          team_seats: 3,
+          url: `/instructor/${f.course.id}/students`,
+        },
+      },
+    ]);
+  });
+
+  it("sends nothing when the Instructor buys their own Course", async () => {
+    const personal = buy(f.ivy.id, f.course.id);
+    const team = buyTeamSeats(f.ivy.id, f.course.id, 2);
+    const notifier = recordingNotifier();
+
+    await notifyCoursePurchased(personal.id, notifier);
+    await notifyCoursePurchased(team.id, notifier);
+
+    expect(notifier.calls).toEqual([]);
   });
 });
 
