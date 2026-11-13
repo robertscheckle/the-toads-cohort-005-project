@@ -10,7 +10,7 @@ import {
   useNotificationsPrototype,
 } from "~/components/notifications-prototype";
 import { PrototypeSwitcher } from "~/components/prototype-switcher";
-import { buildPrototypeNotifications } from "~/lib/notifications-prototype.server";
+import { knockFeedConfig } from "~/lib/knock-prototype.server";
 import { getCurrentUserId, getDevCountry } from "~/lib/session";
 import { getCountryTierInfo, COUNTRIES } from "~/lib/ppp";
 import { eq, and, or, sql, desc } from "drizzle-orm";
@@ -225,10 +225,9 @@ export async function loader({ request }: Route.LoaderArgs) {
     countryTierInfo,
     countries: COUNTRIES,
     isTeamAdmin: currentUserId ? isTeamAdmin(currentUserId) : false,
-    // PROTOTYPE: Notifications built from this user's real seed data
-    prototypeNotifications: currentUser
-      ? buildPrototypeNotifications(currentUser.id, currentUser.role)
-      : [],
+    // PROTOTYPE (#24): config for this user's real Knock feed, with a user
+    // token signed here because enhanced security is on.
+    knock: currentUser ? await knockFeedConfig(currentUser.id) : null,
   };
 }
 
@@ -241,15 +240,12 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
     countryTierInfo,
     countries,
     isTeamAdmin: userIsTeamAdmin,
-    prototypeNotifications,
+    knock,
   } = loaderData;
   const proto = useNotificationsPrototype();
 
   return (
-    <NotificationsPrototypeProvider
-      userId={currentUser?.id ?? null}
-      initial={prototypeNotifications}
-    >
+    <NotificationsPrototypeProvider knock={knock}>
       <div className="flex h-screen overflow-hidden">
         <Sidebar
           currentUser={currentUser}

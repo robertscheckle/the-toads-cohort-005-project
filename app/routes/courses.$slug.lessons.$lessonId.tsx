@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link, useFetcher, useNavigate } from "react-router";
 import { toast } from "sonner";
+import {
+  markAnsweredRead,
+  triggerCommentReplied,
+} from "~/lib/knock-prototype.server";
 import type { Route } from "./+types/courses.$slug.lessons.$lessonId";
 import { getCurrentUserId } from "~/lib/session";
 import { getAccess, requireContentAccess } from "~/lib/access.server";
@@ -906,6 +910,14 @@ export async function action({ params, request }: Route.ActionArgs) {
           parsed.data.parentId ?? null,
           parsed.data.body
         );
+        // PROTOTYPE (#24): notify inline after the write; log, don't retry.
+        if (parsed.data.parentId)
+          await prototypeNotifyReply(
+            currentUserId,
+            parsed.data.parentId,
+            lessonId,
+            course
+          ).catch((e) => console.error("[knock-prototype]", e));
         return { ok: true };
       }
 
@@ -1711,4 +1723,34 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
       </div>
     </div>
   );
+}
+
+// PROTOTYPE (#24) — throwaway. Comment Replied to the top-level comment's
+// author, and "answering marks it read" for the replier.
+async function prototypeNotifyReply(
+  replierId: number,
+  parentId: number,
+  lessonId: number,
+  course: { title: string; slug: string }
+) {
+  const parent = getCommentById(parentId);
+  if (!parent) return;
+  await markAnsweredRead(replierId, parentId);
+  if (parent.userId === replierId) return;
+  const [replier, author] = [replierId, parent.userId].map((id) =>
+    db.select().from(users).where(eq(users.id, id)).get()!
+  );
+  const lesson = db
+    .select()
+    .from(lessons)
+    .where(eq(lessons.id, lessonId))
+    .get()!;
+  await triggerCommentReplied({
+    recipient: author,
+    replier,
+    commentId: parentId,
+    lessonTitle: lesson.title,
+    courseTitle: course.title,
+    url: `/courses/${course.slug}/lessons/${lessonId}#comment-${parentId}`,
+  });
 }

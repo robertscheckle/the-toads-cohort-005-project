@@ -10,8 +10,27 @@
 //   B  "Notifications" sidebar nav item with a count → /notifications only
 //   C  Floating bell top-right of the page → right-hand drawer, "Needs you" pinned
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Link, NavLink, useNavigate, useSearchParams } from "react-router";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { FeedItem } from "@knocklabs/client";
+import {
+  KnockFeedProvider,
+  KnockProvider,
+  useKnockFeed,
+} from "@knocklabs/react";
+import {
+  Link,
+  NavLink,
+  useFetcher,
+  useNavigate,
+  useSearchParams,
+} from "react-router";
 import { Dialog, DropdownMenu, Popover } from "radix-ui";
 import { toast } from "sonner";
 import {
@@ -64,7 +83,9 @@ const MANDATORY: NotificationType[] = [
 export interface ProtoNotification {
   id: string;
   type: NotificationType;
-  actors: string[]; // >1 means a Grouped Notification
+  actors: string[]; // names Knock returns (rich mode)
+  totalActors: number; // Knock's total_actors
+  events: number; // Knock's total_activities; >1 means a Grouped Notification
   course: string;
   lesson?: string;
   extra?: string;
@@ -90,14 +111,18 @@ const TYPE_META: Record<
   "Team Seat Claimed": { icon: UserCheck, tone: "text-violet-600" },
 };
 
-function actorsText(actors: string[]) {
-  if (actors.length === 1) return actors[0];
-  if (actors.length === 2) return `${actors[0]} and ${actors[1]}`;
-  return `${actors[0]} and ${actors.length - 1} others`;
+function actorsText(actors: string[], total = actors.length) {
+  if (total <= 1) return actors[0];
+  if (total === 2 && actors.length >= 2) return `${actors[0]} and ${actors[1]}`;
+  return `${actors[0]} and ${total - 1} other${total - 1 === 1 ? "" : "s"}`;
 }
 
 function NotificationText({ n }: { n: ProtoNotification }) {
-  const who = <strong className="font-medium">{actorsText(n.actors)}</strong>;
+  const who = (
+    <strong className="font-medium">
+      {actorsText(n.actors, n.totalActors)}
+    </strong>
+  );
   const course = <strong className="font-medium">{n.course}</strong>;
   const lesson = <strong className="font-medium">{n.lesson}</strong>;
   switch (n.type) {
@@ -166,82 +191,179 @@ function timeAgo(minutes: number) {
   return `${Math.floor(minutes / (60 * 24))}d ago`;
 }
 
-// ─── In-memory store ────────────────────────────────────────────────────────
+// ─── Knock-backed store (#24) ───────────────────────────────────────────────
+// Replaces the in-memory store. Read, unread and archived live in Knock only
+// (#13). Muting stays in memory: preferences aren't part of this prototype.
 
-function useNotificationStore(
-  userId: number | null,
-  initial: ProtoNotification[]
-) {
-  const [items, setItems] = useState(initial);
+const SOURCE_TYPE: Record<string, NotificationType> = {
+  "comment-replied": "Comment Replied",
+  "course-purchased": "Course Purchased",
+  "refund-requested": "Refund Requested",
+};
+
+export interface KnockFeedConfig {
+  publicKey: string;
+  feedChannelId: string;
+  userId: string;
+  userToken: string;
+}
+
+// How a Notification that arrives over the WebSocket is shown. Switch it from
+// the prototype bar to compare.
+export const ARRIVAL_MODES = ["live", "live + toast", "pill", "next load"];
+type ArrivalMode = (typeof ARRIVAL_MODES)[number];
+
+function toProto(i: FeedItem): ProtoNotification {
+  const d = (i.data ?? {}) as Record<string, string | number | undefined>;
+  const names = i.actors.map(
+    (a) => ("name" in a && a.name ? String(a.name) : null) ?? a.id
+  );
+  return {
+    id: i.id,
+    type: SOURCE_TYPE[i.source.key] ?? "Comment Replied",
+    actors: names.length ? names : ["Someone"],
+    totalActors: i.total_actors,
+    events: i.total_activities ?? 1,
+    course: String(d.course_title ?? ""),
+    lesson: d.lesson_title ? String(d.lesson_title) : undefined,
+    href: String(d.url ?? "/notifications"),
+    minutesAgo: Math.max(
+      0,
+      Math.round((Date.now() - Date.parse(i.inserted_at)) / 60_000)
+    ),
+    read: !!i.read_at,
+    archived: !!i.archived_at,
+  };
+}
+
+function useNotificationStore() {
+  const { feedClient, useFeedStore } = useKnockFeed();
+  const navigate = useNavigate();
+  const raw = useFeedStore((st) => st.items);
+  const meta = useFeedStore((st) => st.metadata);
+  const loading = useFeedStore((st) => st.loading);
   const [muted, setMuted] = useState<NotificationType[]>([]);
-  const [lastUser, setLastUser] = useState(userId);
-  const [lastInitial, setLastInitial] = useState(initial);
-  if (userId !== lastUser) {
-    setLastUser(userId);
-    setLastInitial(initial);
-    setItems(initial);
-    setMuted([]);
-  } else if (initial !== lastInitial) {
-    // Fresh loader data (e.g. after replying to a comment): take what the
-    // server now says is read or new, keep what was archived or read here.
-    setLastInitial(initial);
-    setItems((prev) =>
-      initial.map((n) => {
-        const old = prev.find((x) => x.id === n.id);
-        return old
-          ? { ...n, read: n.read || old.read, archived: old.archived }
-          : n;
-      })
+  const [mode, setMode] = useState<ArrivalMode>("live");
+  const [held, setHeld] = useState<string[]>([]);
+  const [log, setLog] = useState<string[]>([]);
+  const note = (m: string) =>
+    setLog((l) =>
+      [`${new Date().toLocaleTimeString()} ${m}`, ...l].slice(0, 8)
     );
-  }
-  const patch = (id: string, p: Partial<ProtoNotification>) =>
-    setItems((xs) => xs.map((x) => (x.id === id ? { ...x, ...p } : x)));
+
+  // Knock's store says loading=false before the first fetch starts, which
+  // flashes "You're all caught up"; track the first fetch ourselves.
+  const [fetched, setFetched] = useState(false);
+  useEffect(() => {
+    feedClient.fetch().finally(() => setFetched(true));
+  }, [feedClient]);
+
+  // Realtime: Knock's socket says "new message" with no content; the client
+  // then fetches the new items and emits them here.
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  useEffect(() => {
+    const onRealtime = ({ items }: { items: FeedItem[] }) => {
+      note(`socket → ${items.length} new item(s)`);
+      const m = modeRef.current;
+      if (m === "pill" || m === "next load")
+        setHeld((h) => [...h, ...items.map((i) => i.id)]);
+      if (m === "live + toast")
+        for (const i of items) {
+          const n = toProto(i);
+          toast(n.type, {
+            description: `${actorsText(n.actors, n.totalActors)} · ${n.course}`,
+            icon: <Bell className="size-4" />,
+            action: { label: "Open", onClick: () => navigate(n.href) },
+          });
+        }
+    };
+    feedClient.on("items.received.realtime", onRealtime as never);
+    return () => feedClient.off("items.received.realtime", onRealtime as never);
+  }, [feedClient]);
+
+  const byId = (id: string) => raw.find((x) => x.id === id);
+  const items = raw.filter((x) => !held.includes(x.id)).map(toProto);
+  const act = async (label: string, fn: () => Promise<unknown>) => {
+    const t = Date.now();
+    try {
+      await fn();
+      note(`${label} ✓ ${Date.now() - t}ms`);
+    } catch (e) {
+      note(`${label} ✗ ${(e as Error).message}`);
+    }
+  };
+  const withItem = (
+    label: string,
+    id: string,
+    fn: (i: FeedItem) => Promise<unknown>
+  ) => {
+    const i = byId(id);
+    if (i) act(label, () => fn(i));
+  };
   return {
     items,
     muted,
+    loading: loading || !fetched,
+    knockUnread: meta.unread_count,
     unread: items.filter((x) => !x.read && !x.archived).length,
-    markRead: (id: string) => patch(id, { read: true }),
-    markUnread: (id: string) => patch(id, { read: false }),
-    archive: (id: string) => patch(id, { archived: true, read: true }),
-    unarchive: (id: string) => patch(id, { archived: false }),
-    markAllRead: () => setItems((xs) => xs.map((x) => ({ ...x, read: true }))),
+    mode,
+    held: held.length,
+    log,
+    cycleMode: () => {
+      const next =
+        ARRIVAL_MODES[(ARRIVAL_MODES.indexOf(mode) + 1) % ARRIVAL_MODES.length];
+      setMode(next);
+      setHeld([]);
+    },
+    showHeld: () => setHeld([]),
+    refetch: () => act("refetch", () => feedClient.fetch()),
+    markRead: (id: string) =>
+      withItem("mark read", id, (i) => feedClient.markAsRead(i)),
+    markUnread: (id: string) =>
+      withItem("mark unread", id, (i) => feedClient.markAsUnread(i)),
+    // Archive hides and marks read (#12): two calls, Knock has no single one.
+    archive: (id: string) =>
+      withItem("archive", id, async (i) => {
+        await feedClient.markAsArchived(i);
+        if (!i.read_at) await feedClient.markAsRead(i);
+      }),
+    unarchive: (id: string) =>
+      withItem("unarchive", id, (i) => feedClient.markAsUnarchived(i)),
+    markAllRead: () => act("mark all read", () => feedClient.markAllAsRead()),
     mute: (t: NotificationType) => {
       setMuted((m) => [...m, t]);
       toast(`Muted ${t} Notifications`, {
         description: "Change this in Settings → Notifications.",
       });
     },
-    clear: () => setItems([]),
-    reset: () => setItems(initial),
-    // Simulates a live arrival: a fresh copy of this person's newest
-    // non-Refund Notification, from a made-up actor.
-    pushNew: () => {
-      const source = items.find((x) => !MANDATORY.includes(x.type)) ?? items[0];
-      if (!source) {
-        toast("(Nothing in this person's history to simulate from)");
-        return;
-      }
-      const n: ProtoNotification = {
-        ...source,
-        id: `new-${Date.now()}`,
-        actors: ["Simulated Person"],
-        minutesAgo: 0,
-        read: false,
-        archived: false,
-      };
-      if (muted.includes(n.type)) {
-        toast(`(${n.type} is muted, so nothing arrives)`);
-        return;
-      }
-      setItems((xs) => [n, ...xs]);
-      return n;
-    },
   };
 }
 
 type Store = ReturnType<typeof useNotificationStore>;
 const StoreContext = createContext<Store | null>(null);
-const useStore = () => useContext(StoreContext)!;
+const useStore = () => useContext(StoreContext) ?? EMPTY_STORE;
+const noop = () => {};
+// Before Knock connects (server render, first paint) or with no user.
+const EMPTY_STORE: Store = {
+  items: [],
+  muted: [],
+  loading: true,
+  knockUnread: 0,
+  unread: 0,
+  mode: "live",
+  held: 0,
+  log: [],
+  cycleMode: noop,
+  showHeld: noop,
+  refetch: async () => {},
+  markRead: noop,
+  markUnread: noop,
+  archive: noop,
+  unarchive: noop,
+  markAllRead: async () => {},
+  mute: noop,
+};
 
 // ─── Shared pieces ──────────────────────────────────────────────────────────
 
@@ -390,8 +512,7 @@ function Row({
             </span>
           )}
           {n.type}
-          {n.actors.length > 1 && ` · ${n.actors.length} events`} ·{" "}
-          {timeAgo(n.minutesAgo)}
+          {n.events > 1 && ` · ${n.events} events`} · {timeAgo(n.minutesAgo)}
         </p>
       </Link>
       <div className="flex shrink-0 items-center gap-1">
@@ -473,6 +594,12 @@ function filtered(items: ProtoNotification[], f: Filter) {
 
 export function NotificationsPage() {
   const s = useStore();
+  // Knock's socket only announces *new* messages. State changed elsewhere
+  // (answering a comment, another tab) shows up only after a fetch.
+  useEffect(() => {
+    s.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [filter, setFilter] = useState<Filter>("all");
   const list = filtered(s.items, filter);
   return (
@@ -481,7 +608,7 @@ export function NotificationsPage() {
         <div>
           <h1 className="text-2xl font-bold">Notifications</h1>
           <p className="text-sm text-muted-foreground">
-            What's happened in your Courses and Purchases. Kept for 90 days.
+            What's happened in your Courses and Purchases.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -503,8 +630,13 @@ export function NotificationsPage() {
       <div className="mb-3">
         <FilterTabs value={filter} onChange={setFilter} showArchived />
       </div>
+      <NewNotificationsPill />
       <div className="overflow-hidden rounded-lg border bg-card">
-        {list.length === 0 ? (
+        {list.length === 0 && s.loading ? (
+          <p className="p-6 text-center text-sm text-muted-foreground">
+            Loading from Knock…
+          </p>
+        ) : list.length === 0 ? (
           <EmptyState archived={filter === "archived"} />
         ) : (
           list.map((n) => <Row key={n.id} n={n} />)
@@ -713,18 +845,50 @@ export const PROTOTYPE_VARIANTS = [
   { key: "C", name: "Floating bell + drawer" },
 ];
 
-export function NotificationsPrototypeProvider({
-  userId,
-  initial,
-  children,
-}: {
-  userId: number | null;
-  initial: ProtoNotification[];
-  children: React.ReactNode;
-}) {
-  const store = useNotificationStore(userId, initial);
+const EMPTY_FEED_KEY = "none";
+
+function StoreFromKnock({ children }: { children: React.ReactNode }) {
+  const store = useNotificationStore();
   return (
     <StoreContext.Provider value={store}>{children}</StoreContext.Provider>
+  );
+}
+
+export function NotificationsPrototypeProvider({
+  knock,
+  children,
+}: {
+  knock: KnockFeedConfig | null;
+  children: React.ReactNode;
+}) {
+  // Knock's client is browser-only; render without it on the server.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!knock || !mounted) {
+    return (
+      <StoreContext.Provider value={null}>{children}</StoreContext.Provider>
+    );
+  }
+  return (
+    <KnockProvider
+      key={knock.userId ?? EMPTY_FEED_KEY}
+      apiKey={knock.publicKey}
+      user={{ id: knock.userId }}
+      userToken={knock.userToken}
+    >
+      <KnockFeedProvider
+        feedId={knock.feedChannelId}
+        defaultFeedOptions={{
+          // compact (the default) drops total_activities and all but one actor
+          mode: "rich",
+          // one feed for All, Unread and Archived
+          archived: "include",
+          page_size: 50,
+        }}
+      >
+        <StoreFromKnock>{children}</StoreFromKnock>
+      </KnockFeedProvider>
+    </KnockProvider>
   );
 }
 
@@ -755,30 +919,60 @@ export function useNotificationsPrototype() {
 }
 
 export function PrototypeControls() {
-  const s = useStore();
+  const s = useContext(StoreContext);
+  const fetcher = useFetcher();
+  if (!s) return null;
   const btn =
-    "rounded-full px-2 py-0.5 text-xs text-white/80 hover:bg-white/15 hover:text-white";
+    "whitespace-nowrap rounded-full px-2 py-0.5 text-xs text-white/80 hover:bg-white/15 hover:text-white";
+  const send = (intent: string) =>
+    fetcher.submit(
+      { intent },
+      { method: "post", action: "/api/prototype-knock" }
+    );
   return (
     <>
       <button
         className={btn}
-        onClick={() => {
-          const n = s.pushNew();
-          if (n)
-            toast(n.type, {
-              description: "Toast on live arrival: keep or drop?",
-              icon: <Bell className="size-4" />,
-            });
-        }}
+        onClick={() => send("one")}
+        title="Trigger a real Knock workflow for you"
       >
-        + new
+        + real event
       </button>
-      <button className={btn} onClick={s.clear}>
-        empty
+      <button
+        className={btn}
+        onClick={() => send("burst")}
+        title="3 replies to one comment, 3 actors"
+      >
+        + burst ×3
       </button>
-      <button className={btn} onClick={s.reset}>
-        reset
+      <button
+        className={btn}
+        onClick={s.cycleMode}
+        title="How a live arrival shows"
+      >
+        arrival: {s.mode}
+        {s.held > 0 && ` (${s.held} held)`}
       </button>
+      <button className={btn} onClick={s.refetch}>
+        refetch
+      </button>
+      <span className="px-1 text-[10px] text-white/50" title={s.log.join("\n")}>
+        knock unread {s.knockUnread} · {s.log[0] ?? ""}
+      </span>
     </>
+  );
+}
+
+export function NewNotificationsPill() {
+  const s = useContext(StoreContext);
+  if (!s || s.mode !== "pill" || s.held === 0) return null;
+  return (
+    <button
+      onClick={s.showHeld}
+      className="sticky top-3 z-20 mx-auto mb-2 flex items-center gap-2 rounded-full bg-sky-600 px-3 py-1 text-xs font-medium text-white shadow"
+    >
+      <Bell className="size-3.5" /> {s.held} new Notification
+      {s.held === 1 ? "" : "s"} · Show
+    </button>
   );
 }
