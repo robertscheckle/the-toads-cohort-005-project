@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useFetcher } from "react-router";
+import { useFetcher, useLocation } from "react-router";
 import { toast } from "sonner";
 import { MessageSquare, Pencil, Reply, Trash2 } from "lucide-react";
 import { Button } from "~/components/ui/button";
@@ -100,7 +100,11 @@ function CommentForm({
       />
 
       <div className="flex items-center gap-3">
-        <Button type="submit" size="sm" disabled={submitting || empty || tooLong}>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={submitting || empty || tooLong}
+        >
           {submitting ? "Posting..." : submitLabel}
         </Button>
 
@@ -206,11 +210,28 @@ function CommentItem({
   const [editing, setEditing] = useState(false);
   const [replying, setReplying] = useState(false);
 
-  const isAuthor = currentUserId !== null && comment.author.id === currentUserId;
+  const isAuthor =
+    currentUserId !== null && comment.author.id === currentUserId;
+
+  // Notifications link to `#comment-<id>`. Read the router's hash rather than
+  // relying on :target, which client-side navigation never sets.
+  const anchorId = `comment-${comment.id}`;
+  const { hash } = useLocation();
+  const targeted = hash === `#${anchorId}`;
+  useEffect(() => {
+    if (targeted) {
+      document
+        .getElementById(anchorId)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [targeted, anchorId]);
+  const targetedClass =
+    targeted &&
+    "rounded-md bg-sky-50 px-3 ring-2 ring-sky-300 dark:bg-sky-950/40 dark:ring-sky-800";
 
   if (comment.deleted) {
     return (
-      <div className="py-3">
+      <div id={anchorId} className={cn("py-3", targetedClass)}>
         <p className="text-sm italic text-muted-foreground">
           This comment was deleted.
         </p>
@@ -225,7 +246,10 @@ function CommentItem({
   }
 
   return (
-    <div className={cn("py-3", isReply && "border-l pl-4")}>
+    <div
+      id={anchorId}
+      className={cn("py-3", isReply && "border-l pl-4", targetedClass)}
+    >
       <div className="flex items-start gap-3">
         <UserAvatar
           name={comment.author.name}
@@ -338,6 +362,8 @@ function Replies({
   );
 }
 
+const COMMENTS_ANCHOR_ID = "comments";
+
 export function CommentThread({
   comments,
   currentUserId,
@@ -352,8 +378,18 @@ export function CommentThread({
   canPost: boolean;
   instructorName: string;
 }) {
+  // A Grouped Comment Posted Notification links to `#comments`, this section.
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (hash === `#${COMMENTS_ANCHOR_ID}`) {
+      document
+        .getElementById(COMMENTS_ANCHOR_ID)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [hash]);
+
   return (
-    <Card className="mb-8">
+    <Card id={COMMENTS_ANCHOR_ID} className="mb-8 scroll-mt-6">
       <CardContent className="p-6">
         <div className="mb-4 flex items-center gap-2">
           <MessageSquare className="size-5 text-primary" />

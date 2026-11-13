@@ -1,0 +1,1 @@
+**{{ data.claimer_name }}**{% if total_actors > 1 %} and {{ total_actors | minus: 1 }} {% if total_actors == 2 %}other{% else %}others{% endif %}{% endif %} claimed {% if total_activities > 1 %}Team Seats{% else %}a Team Seat{% endif %} in **{{ data.course_title }}** ({{ data.claimed_seats }} of {{ data.total_seats }} claimed).
