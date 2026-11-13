@@ -742,7 +742,7 @@ export function useNotificationsPrototype() {
       setSaved(fromUrl ?? localStorage.getItem(VARIANT_KEY));
     } catch {}
   }, [fromUrl]);
-  const variant = fromUrl ?? saved ?? "A";
+  const variant = fromUrl ?? saved ?? "B"; // B was chosen
   return useMemo(
     () => ({
       variant,
