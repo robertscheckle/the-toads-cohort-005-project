@@ -1,7 +1,9 @@
 import { Bell } from "lucide-react";
 import type { NotificationType } from "~/lib/notifications";
 import type { NotificationRowDefinition } from "./row-definition";
+import { courseRatedRow } from "./types/course-rated";
 import { refundRequestedRow } from "./types/refund-requested";
+import { teamSeatClaimedRow } from "./types/team-seat-claimed";
 import { coursePurchasedRow } from "./types/course-purchased";
 import { refundApprovedRow } from "./types/refund-approved";
 import { refundDeclinedRow } from "./types/refund-declined";
@@ -12,6 +14,8 @@ import { purchaseRefundedRow } from "./types/purchase-refunded";
 // NotificationRowDefinition, then register it here.
 const ROWS: Partial<Record<NotificationType, NotificationRowDefinition>> = {
   "refund-requested": refundRequestedRow,
+  "course-rated": courseRatedRow,
+  "team-seat-claimed": teamSeatClaimedRow,
   "course-purchased": coursePurchasedRow,
   "refund-approved": refundApprovedRow,
   "refund-declined": refundDeclinedRow,

@@ -4,6 +4,7 @@ import { createTestDb } from "~/test/setup";
 import {
   categories,
   coupons,
+  courseRatings,
   courses,
   enrollments,
   purchases,
@@ -27,11 +28,13 @@ vi.mock("~/db", () => ({
 }));
 
 import {
-  notifyCoursePurchased,
   notifyRefundDecided,
   notifyRefundRequested,
+  notifyTeamSeatClaimed,
 } from "./notification-events.server";
 import { applyRefundDecision } from "./refunds.server";
+import { notifyCoursePurchased } from "./notification-events.server";
+import { notifyCourseRated } from "./notification-events.server";
 
 function addUser(name: string, role: UserRole) {
   return testDb
@@ -165,6 +168,149 @@ describe("notifyRefundRequested", () => {
   });
 });
 
+// ─── Team Seat Claimed ───
+
+/** A team Purchase of `seats` Team Seats by `buyerId`; returns the seats. */
+function buyTeamSeats(buyerId: number, courseId: number, seats: number) {
+  const purchase = testDb
+    .insert(purchases)
+    .values({ userId: buyerId, courseId, amountPaid: 7900 * seats })
+    .returning()
+    .get();
+  const team = testDb.insert(teams).values({}).returning().get();
+  return Array.from({ length: seats }, (_, index) =>
+    testDb
+      .insert(coupons)
+      .values({
+        teamId: team.id,
+        courseId,
+        code: `SEAT-${purchase.id}-${index}`,
+        purchaseId: purchase.id,
+      })
+      .returning()
+      .get()
+  );
+}
+
+/** `userId` claims Team Seat `couponId` (as the redeem action does). */
+function claimSeat(couponId: number, userId: number) {
+  testDb
+    .update(coupons)
+    .set({ redeemedByUserId: userId, redeemedAt: new Date().toISOString() })
+    .where(eq(coupons.id, couponId))
+    .run();
+}
+
+describe("notifyTeamSeatClaimed", () => {
+  it("tells the team Purchase's buyer who claimed a Team Seat, with n of m claimed", async () => {
+    const buyer = addUser("Bea", UserRole.Student);
+    const seats = buyTeamSeats(buyer.id, f.course.id, 3);
+    claimSeat(seats[0].id, f.liam.id);
+    const notifier = recordingNotifier();
+
+    await notifyTeamSeatClaimed(seats[0].id, notifier);
+
+    expect(notifier.calls).toEqual([
+      {
+        operation: "notify",
+        type: "team-seat-claimed",
+        recipients: [{ id: String(buyer.id), name: "Bea" }],
+        actor: { id: String(f.liam.id), name: "Liam" },
+        data: {
+          coupon_id: seats[0].id,
+          purchase_id: seats[0].purchaseId,
+          claimer_name: "Liam",
+          course_title: "Introduction to TypeScript",
+          claimed_seats: 1,
+          total_seats: 3,
+          url: "/team",
+        },
+      },
+    ]);
+  });
+
+  it("counts the seats already claimed, including the buyer's own", async () => {
+    const buyer = addUser("Bea", UserRole.Student);
+    const seats = buyTeamSeats(buyer.id, f.course.id, 5);
+    claimSeat(seats[0].id, buyer.id);
+    claimSeat(seats[1].id, f.liam.id);
+    const max = addUser("Max", UserRole.Student);
+    claimSeat(seats[2].id, max.id);
+    const notifier = recordingNotifier();
+
+    await notifyTeamSeatClaimed(seats[2].id, notifier);
+
+    expect(notifier.calls).toHaveLength(1);
+    expect(notifier.calls[0]).toMatchObject({
+      type: "team-seat-claimed",
+      recipients: [{ id: String(buyer.id), name: "Bea" }],
+      actor: { id: String(max.id), name: "Max" },
+      data: { claimer_name: "Max", claimed_seats: 3, total_seats: 5 },
+    });
+  });
+
+  it("only counts the seats of that team Purchase", async () => {
+    const buyer = addUser("Bea", UserRole.Student);
+    const otherPurchase = buyTeamSeats(buyer.id, f.course.id, 4);
+    claimSeat(otherPurchase[0].id, f.ivy.id);
+    const seats = buyTeamSeats(buyer.id, f.course.id, 2);
+    claimSeat(seats[1].id, f.liam.id);
+    const notifier = recordingNotifier();
+
+    await notifyTeamSeatClaimed(seats[1].id, notifier);
+
+    expect(notifier.calls[0]).toMatchObject({
+      data: {
+        purchase_id: seats[1].purchaseId,
+        claimed_seats: 1,
+        total_seats: 2,
+      },
+    });
+  });
+
+  it("sends nothing when the buyer claims their own Team Seat", async () => {
+    const buyer = addUser("Bea", UserRole.Student);
+    const seats = buyTeamSeats(buyer.id, f.course.id, 3);
+    claimSeat(seats[0].id, buyer.id);
+    const notifier = recordingNotifier();
+
+    await notifyTeamSeatClaimed(seats[0].id, notifier);
+
+    expect(notifier.calls).toEqual([]);
+  });
+
+  it("sends nothing for a Team Seat nobody has claimed", async () => {
+    const buyer = addUser("Bea", UserRole.Student);
+    const seats = buyTeamSeats(buyer.id, f.course.id, 2);
+    const notifier = recordingNotifier();
+
+    await notifyTeamSeatClaimed(seats[0].id, notifier);
+
+    expect(notifier.calls).toEqual([]);
+  });
+
+  it("doesn't throw when the Notifier fails", async () => {
+    const buyer = addUser("Bea", UserRole.Student);
+    const seats = buyTeamSeats(buyer.id, f.course.id, 2);
+    claimSeat(seats[0].id, f.liam.id);
+    const failing = recordingNotifier();
+    failing.notify = async () => {
+      throw new Error("Knock is down");
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      notifyTeamSeatClaimed(seats[0].id, failing)
+    ).resolves.toBeUndefined();
+
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(`team-seat-claimed to [${buyer.id}]`),
+      expect.any(Error)
+    );
+    log.mockRestore();
+  });
+});
+
 describe("notifyCoursePurchased", () => {
   function buy(buyerId: number, courseId: number) {
     return testDb
@@ -252,6 +398,73 @@ describe("notifyCoursePurchased", () => {
     await notifyCoursePurchased(team.id, notifier);
 
     expect(notifier.calls).toEqual([]);
+  });
+});
+
+function rate(userId: number, courseId: number, rating: number) {
+  return testDb
+    .insert(courseRatings)
+    .values({ userId, courseId, rating })
+    .returning()
+    .get();
+}
+
+describe("notifyCourseRated", () => {
+  it("sends a first rating to the Instructor who owns the Course, from the Student", async () => {
+    const rating = rate(f.liam.id, f.course.id, 4);
+    const notifier = recordingNotifier();
+
+    await notifyCourseRated(rating.id, "first", notifier);
+
+    expect(notifier.calls).toEqual([
+      {
+        operation: "notify",
+        type: "course-rated",
+        recipients: [{ id: String(f.ivy.id), name: "Ivy" }],
+        actor: { id: String(f.liam.id), name: "Liam" },
+        data: {
+          course_rating_id: rating.id,
+          course_id: f.course.id,
+          course_title: "Introduction to TypeScript",
+          student_name: "Liam",
+          rating: 4,
+          url: `/instructor/${f.course.id}`,
+        },
+      },
+    ]);
+  });
+
+  it("sends nothing when a Student edits an existing rating", async () => {
+    const rating = rate(f.liam.id, f.course.id, 2);
+    const notifier = recordingNotifier();
+
+    await notifyCourseRated(rating.id, "edit", notifier);
+
+    expect(notifier.calls).toEqual([]);
+  });
+
+  it("sends nothing when the Instructor rates their own Course", async () => {
+    const rating = rate(f.ivy.id, f.course.id, 5);
+    const notifier = recordingNotifier();
+
+    await notifyCourseRated(rating.id, "first", notifier);
+
+    expect(notifier.calls).toEqual([]);
+  });
+
+  it("doesn't throw when the Notifier fails", async () => {
+    const rating = rate(f.liam.id, f.course.id, 3);
+    const failing = recordingNotifier();
+    failing.notify = async () => {
+      throw new Error("Knock is down");
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      notifyCourseRated(rating.id, "first", failing)
+    ).resolves.toBeUndefined();
+
+    log.mockRestore();
   });
 });
 

@@ -1,7 +1,8 @@
-import { asc, count, eq } from "drizzle-orm";
+import { and, asc, count, eq, isNotNull, type SQL } from "drizzle-orm";
 import { db } from "~/db";
 import {
   coupons,
+  courseRatings,
   courses,
   purchases,
   refunds,
@@ -82,6 +83,68 @@ export async function notifyRefundRequested(
   });
 }
 
+// ─── Team Seat Claimed ───
+
+/**
+ * Team Seat `couponId` was just claimed: tell the Student who made that team
+ * Purchase, with how many of its Team Seats are now claimed. Nothing goes to
+ * the Instructor, and nothing when the buyer claims their own seat.
+ */
+export async function notifyTeamSeatClaimed(
+  couponId: number,
+  notifier: Notifier = defaultNotifier()
+): Promise<void> {
+  const seat = db
+    .select({
+      purchaseId: coupons.purchaseId,
+      claimerId: coupons.redeemedByUserId,
+      buyerId: purchases.userId,
+      courseTitle: courses.title,
+    })
+    .from(coupons)
+    .innerJoin(purchases, eq(purchases.id, coupons.purchaseId))
+    .innerJoin(courses, eq(courses.id, coupons.courseId))
+    .where(eq(coupons.id, couponId))
+    .get();
+  if (!seat || seat.claimerId === null) return;
+
+  const claimer = db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(eq(users.id, seat.claimerId))
+    .get();
+  const buyer = db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(eq(users.id, seat.buyerId))
+    .get();
+  if (!claimer || !buyer) return;
+
+  const actor = person(claimer);
+  const recipients = withoutActor([person(buyer)], actor);
+  if (recipients.length === 0) return;
+
+  const totalSeats = countSeats(eq(coupons.purchaseId, seat.purchaseId));
+  const claimedSeats = countSeats(
+    and(eq(coupons.purchaseId, seat.purchaseId), isNotNull(coupons.redeemedAt))
+  );
+
+  await neverThrow(notifier).notify("team-seat-claimed", recipients, actor, {
+    coupon_id: couponId,
+    purchase_id: seat.purchaseId,
+    claimer_name: claimer.name,
+    course_title: seat.courseTitle,
+    claimed_seats: claimedSeats,
+    total_seats: totalSeats,
+    url: "/team",
+  });
+}
+
+function countSeats(where: SQL | undefined): number {
+  const row = db.select({ seats: count() }).from(coupons).where(where).get();
+  return row?.seats ?? 0;
+}
+
 // ─── Course Purchased ───
 
 /**
@@ -134,6 +197,59 @@ export async function notifyCoursePurchased(
     course_title: purchase.courseTitle,
     team_seats: teamSeats,
     url: `/instructor/${purchase.courseId}/students`,
+  });
+}
+
+// ─── Course Rated ───
+
+/** Whether a rating write created the Student's rating or changed an existing one. */
+export type CourseRatingChange = "first" | "edit";
+
+/**
+ * A Student rated a Course (Course Rating `courseRatingId`): tell the
+ * Instructor who owns it, but only for a first rating, never for an edit.
+ */
+export async function notifyCourseRated(
+  courseRatingId: number,
+  change: CourseRatingChange,
+  notifier: Notifier = defaultNotifier()
+): Promise<void> {
+  if (change === "edit") return;
+
+  const rating = db
+    .select({
+      rating: courseRatings.rating,
+      studentId: users.id,
+      studentName: users.name,
+      courseId: courses.id,
+      courseTitle: courses.title,
+      instructorId: courses.instructorId,
+    })
+    .from(courseRatings)
+    .innerJoin(users, eq(users.id, courseRatings.userId))
+    .innerJoin(courses, eq(courses.id, courseRatings.courseId))
+    .where(eq(courseRatings.id, courseRatingId))
+    .get();
+  if (!rating) return;
+
+  const instructor = db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(eq(users.id, rating.instructorId))
+    .get();
+  if (!instructor) return;
+
+  const actor = person({ id: rating.studentId, name: rating.studentName });
+  const recipients = withoutActor([person(instructor)], actor);
+  if (recipients.length === 0) return;
+
+  await neverThrow(notifier).notify("course-rated", recipients, actor, {
+    course_rating_id: courseRatingId,
+    course_id: rating.courseId,
+    course_title: rating.courseTitle,
+    student_name: rating.studentName,
+    rating: rating.rating,
+    url: `/instructor/${rating.courseId}`,
   });
 }
 
