@@ -1,6 +1,14 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "~/db";
-import { courses, purchases, refunds, users, UserRole } from "~/db/schema";
+import {
+  coupons,
+  courses,
+  purchases,
+  refunds,
+  users,
+  RefundStatus,
+  UserRole,
+} from "~/db/schema";
 import {
   defaultNotifier,
   neverThrow,
@@ -72,4 +80,113 @@ export async function notifyRefundRequested(
     course_title: request.courseTitle,
     url: "/admin/refunds",
   });
+}
+
+// ─── Refund decisions ───
+
+function getUser(userId: number) {
+  return db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(eq(users.id, userId))
+    .get();
+}
+
+/**
+ * An Admin decided Refund Request `refundRequestId`; call right after the
+ * decision is written. Reads the outcome from the Refund Request:
+ * - Approved / Declined: tells the Student, and marks that Refund Requested
+ *   Notification read for every Admin.
+ * - Refunded: tells the Student (Team Seat wording for a team Purchase) and
+ *   the Course's Instructor.
+ */
+export async function notifyRefundDecided(
+  refundRequestId: number,
+  notifier: Notifier = defaultNotifier()
+): Promise<void> {
+  const decided = db
+    .select({
+      status: refunds.status,
+      adminId: refunds.resolvedByUserId,
+      purchaseId: purchases.id,
+      studentId: users.id,
+      studentName: users.name,
+      courseId: courses.id,
+      courseTitle: courses.title,
+      instructorId: courses.instructorId,
+    })
+    .from(refunds)
+    .innerJoin(purchases, eq(purchases.id, refunds.purchaseId))
+    .innerJoin(users, eq(users.id, purchases.userId))
+    .innerJoin(courses, eq(courses.id, purchases.courseId))
+    .where(eq(refunds.id, refundRequestId))
+    .get();
+  if (!decided || decided.adminId === null) return;
+
+  const admin = getUser(decided.adminId);
+  if (!admin) return;
+
+  const safe = neverThrow(notifier);
+  const actor = person(admin);
+  const student = withoutActor(
+    [person({ id: decided.studentId, name: decided.studentName })],
+    actor
+  );
+
+  if (decided.status === RefundStatus.Refunded) {
+    if (student.length > 0) {
+      const isTeamPurchase = !!db
+        .select({ id: coupons.id })
+        .from(coupons)
+        .where(eq(coupons.purchaseId, decided.purchaseId))
+        .get();
+      await safe.notify("refunded", student, actor, {
+        refund_request_id: refundRequestId,
+        course_title: decided.courseTitle,
+        is_team_purchase: isTeamPurchase,
+        url: "/dashboard",
+      });
+    }
+
+    const instructor = getUser(decided.instructorId);
+    const instructors = instructor
+      ? withoutActor([person(instructor)], actor)
+      : [];
+    if (instructors.length > 0) {
+      await safe.notify("purchase-refunded", instructors, actor, {
+        refund_request_id: refundRequestId,
+        purchase_id: decided.purchaseId,
+        course_id: decided.courseId,
+        course_title: decided.courseTitle,
+        student_name: decided.studentName,
+        url: `/instructor/${decided.courseId}/students`,
+      });
+    }
+    return;
+  }
+
+  if (
+    decided.status !== RefundStatus.Approved &&
+    decided.status !== RefundStatus.Declined
+  ) {
+    return;
+  }
+
+  if (student.length > 0) {
+    const type =
+      decided.status === RefundStatus.Approved
+        ? "refund-approved"
+        : "refund-declined";
+    await safe.notify(type, student, actor, {
+      refund_request_id: refundRequestId,
+      course_title: decided.courseTitle,
+      url: "/dashboard",
+    });
+  }
+
+  await safe.markReadWhere(
+    "refund-requested",
+    listAdmins().map((a) => String(a.id)),
+    { refund_request_id: refundRequestId }
+  );
 }
